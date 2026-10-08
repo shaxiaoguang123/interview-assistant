@@ -2,6 +2,7 @@
 import { computed, onMounted, ref } from "vue";
 import { useRoute } from "vue-router";
 import { ApiError, request } from "../api/client";
+import PracticeRating from "../components/PracticeRating.vue";
 
 interface SessionItem {
   id: number;
@@ -27,6 +28,7 @@ const answerDraft = ref("");
 const errorMessage = ref("");
 const loading = ref(true);
 const skipping = ref(false);
+const reviewing = ref(false);
 const sessionId = computed(() => Number(route.params.id));
 const currentItem = computed(
   () => practiceSession.value?.items.find((item) => item.status === "shown") ?? null,
@@ -69,6 +71,25 @@ async function skipCurrentItem(): Promise<void> {
   }
 }
 
+async function recordRating(reviewRating: string): Promise<void> {
+  if (!currentItem.value) return;
+  errorMessage.value = "";
+  reviewing.value = true;
+  try {
+    await request(`/api/v1/session-items/${currentItem.value.id}/review`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ review_rating: reviewRating }),
+    });
+    answerDraft.value = "";
+    await loadSession();
+  } catch (error) {
+    errorMessage.value = displayError(error);
+  } finally {
+    reviewing.value = false;
+  }
+}
+
 function rewriteDraft(): void {
   answerDraft.value = "";
 }
@@ -92,7 +113,8 @@ onMounted(loadSession);
           <textarea v-model="answerDraft" aria-label="临时回答" />
         </label>
         <button type="button" @click="rewriteDraft">重新回答</button>
-        <button type="button" :disabled="skipping" @click="skipCurrentItem">
+        <PracticeRating :disabled="reviewing" @rate="recordRating" />
+        <button type="button" :disabled="skipping || reviewing" @click="skipCurrentItem">
           {{ skipping ? "正在跳过…" : "跳过此题" }}
         </button>
       </template>

@@ -1,6 +1,7 @@
 import { flushPromises, mount } from "@vue/test-utils";
 import { createMemoryHistory, createRouter } from "vue-router";
 import { describe, expect, it, vi } from "vitest";
+import { createAppRouter } from "../src/router";
 
 describe("rule-based practice", () => {
   it("renders random, Topic, and Tag setup modes", async () => {
@@ -71,5 +72,157 @@ describe("rule-based practice", () => {
     const rendered = wrapper.text();
     expect(rendered.indexOf("First stored question")).toBeLessThan(rendered.indexOf("Second stored question"));
     expect(wrapper.find("textarea").exists()).toBe(true);
+  });
+
+  it("requires a user rating and sends the Review without the answer draft", async () => {
+    const sessionModules = import.meta.glob("../src/pages/PracticeSessionPage.vue", { eager: true });
+    const sessionModule = sessionModules["../src/pages/PracticeSessionPage.vue"] as
+      | { default?: object }
+      | undefined;
+    expect(sessionModule).toBeDefined();
+    const SessionPage = sessionModule!.default;
+    let completed = false;
+    const requests: Array<{ path: string; method: string; body?: string }> = [];
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = String(input);
+      const method = init?.method ?? "GET";
+      requests.push({ path, method, body: typeof init?.body === "string" ? init.body : undefined });
+      if (path === "/api/v1/practice-sessions/5" && method === "GET") {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            id: 5,
+            mode: "random",
+            selector_version: "v1",
+            selection_seed: 123,
+            started_at: "2026-10-08T00:00:00Z",
+            completed_at: completed ? "2026-10-08T00:01:00Z" : null,
+            items: [
+              {
+                id: 51,
+                question_id: 2,
+                ordinal: 1,
+                status: completed ? "completed" : "shown",
+                question: { id: 2, text: "Rate this practice answer", status: "active", archived_at: null },
+              },
+            ],
+          }),
+        } as Response;
+      }
+      if (path === "/api/v1/session-items/51/review" && method === "POST") {
+        completed = true;
+        return {
+          ok: true,
+          status: 201,
+          json: async () => ({ id: 90, session_item_id: 51, review_rating: "basic" }),
+        } as Response;
+      }
+      throw new Error(`Unexpected request: ${method} ${path}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const router = createAppRouter(createMemoryHistory());
+    await router.push("/practice/sessions/5");
+    await router.isReady();
+    const wrapper = mount(SessionPage!, { global: { plugins: [router] } });
+    await flushPromises();
+    await wrapper.get("textarea[aria-label='临时回答']").setValue("Never sent as an answer record");
+    await wrapper.get("button[aria-label='自评基本会']").trigger("click");
+    await flushPromises();
+
+    const reviewRequest = requests.find(
+      (item) => item.path === "/api/v1/session-items/51/review" && item.method === "POST",
+    );
+    expect(reviewRequest).toBeDefined();
+    expect(JSON.parse(reviewRequest!.body ?? "{}" )).toEqual({ review_rating: "basic" });
+    expect(requests.some((item) => item.path.includes("saved-answers"))).toBe(false);
+    expect(wrapper.text()).toContain("本次练习已完成");
+  });
+
+  it("corrects a review in place without creating another Review", async () => {
+    const detailModules = import.meta.glob("../src/pages/QuestionDetailPage.vue", { eager: true });
+    const detailModule = detailModules["../src/pages/QuestionDetailPage.vue"] as
+      | { default?: object }
+      | undefined;
+    expect(detailModule, "missing feature: PracticeReview history panel").toBeDefined();
+    const DetailPage = detailModule!.default;
+    let rating = "vague";
+    const requests: Array<{ path: string; method: string; body?: string }> = [];
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = String(input);
+      const method = init?.method ?? "GET";
+      requests.push({ path, method, body: typeof init?.body === "string" ? init.body : undefined });
+      if (path === "/api/v1/questions/1") {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            id: 1,
+            text: "Review history question",
+            answer_type: null,
+            difficulty: null,
+            status: "active",
+            archived_at: null,
+            topics: [],
+            tags: [],
+            state: { is_favorite: false, is_wrong: false, user_note: null },
+          }),
+        } as Response;
+      }
+      if (path === "/api/v1/topics" || path === "/api/v1/tags") {
+        return { ok: true, status: 200, json: async () => [] } as Response;
+      }
+      if (path === "/api/v1/questions/1/practice-reviews") {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => [
+            {
+              id: 21,
+              question_id: 1,
+              session_item_id: 51,
+              review_rating: rating,
+              reviewed_at: "2026-10-08T00:00:00Z",
+              created_at: "2026-10-08T00:00:00Z",
+              updated_at: rating === "vague" ? "2026-10-08T00:00:00Z" : "2026-10-08T00:01:00Z",
+            },
+          ],
+        } as Response;
+      }
+      if (path === "/api/v1/practice-reviews/21" && method === "PATCH") {
+        rating = JSON.parse(String(init?.body)).review_rating;
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            id: 21,
+            question_id: 1,
+            session_item_id: 51,
+            review_rating: rating,
+            reviewed_at: "2026-10-08T00:00:00Z",
+            created_at: "2026-10-08T00:00:00Z",
+            updated_at: "2026-10-08T00:01:00Z",
+          }),
+        } as Response;
+      }
+      throw new Error(`Unexpected request: ${method} ${path}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const router = createAppRouter(createMemoryHistory());
+    await router.push("/questions/1");
+    await router.isReady();
+    const wrapper = mount(DetailPage!, { global: { plugins: [router] } });
+    await flushPromises();
+    await wrapper.get("select[aria-label='更正掌握度 21']").setValue("basic");
+    await wrapper.get("button[aria-label='保存自评 21']").trigger("click");
+    await flushPromises();
+
+    const patch = requests.find((item) => item.path === "/api/v1/practice-reviews/21");
+    expect(JSON.parse(patch?.body ?? "{}" )).toEqual({ review_rating: "basic" });
+    expect(requests.filter((item) => item.path === "/api/v1/questions/1/practice-reviews")).toHaveLength(1);
+    expect(wrapper.findAll("[data-review-id='21']")).toHaveLength(1);
+    expect(wrapper.text()).toContain("基本会");
   });
 });

@@ -23,8 +23,20 @@ interface QuestionDetail {
   state: { is_favorite: boolean; is_wrong: boolean; user_note: string | null };
 }
 
+interface PracticeReviewItem {
+  id: number;
+  question_id: number;
+  session_item_id: number;
+  review_rating: "dont_know" | "vague" | "basic" | "proficient";
+  reviewed_at: string;
+  created_at: string;
+  updated_at: string;
+}
+
 const route = useRoute();
 const question = ref<QuestionDetail | null>(null);
+const reviews = ref<PracticeReviewItem[]>([]);
+const reviewRatingDrafts = ref<Record<number, PracticeReviewItem["review_rating"]>>({});
 const topics = ref<TaxonomyItem[]>([]);
 const tags = ref<TaxonomyItem[]>([]);
 const errorMessage = ref("");
@@ -40,6 +52,15 @@ function displayError(error: unknown): string {
   return "请求失败，请稍后重试。";
 }
 
+function ratingLabel(rating: PracticeReviewItem["review_rating"]): string {
+  return {
+    dont_know: "不会",
+    vague: "模糊",
+    basic: "基本会",
+    proficient: "熟练",
+  }[rating];
+}
+
 function mergeHistoricalItems<T extends TaxonomyItem>(activeItems: T[], linkedItems: T[]): T[] {
   const byId = new Map(activeItems.map((item) => [item.id, item]));
   for (const item of linkedItems) if (!byId.has(item.id)) byId.set(item.id, item);
@@ -50,14 +71,19 @@ async function loadQuestion(): Promise<void> {
   loading.value = true;
   errorMessage.value = "";
   try {
-    const [questionResult, topicResult, tagResult] = await Promise.all([
+    const [questionResult, topicResult, tagResult, reviewRows] = await Promise.all([
       request<QuestionDetail>(`/api/v1/questions/${questionId.value}`),
       request<TaxonomyItem[]>("/api/v1/topics"),
       request<TaxonomyItem[]>("/api/v1/tags"),
+      request<PracticeReviewItem[]>(`/api/v1/questions/${questionId.value}/practice-reviews`),
     ]);
     question.value = questionResult;
     topics.value = mergeHistoricalItems(topicResult, questionResult.topics);
     tags.value = mergeHistoricalItems(tagResult, questionResult.tags);
+    reviews.value = reviewRows;
+    reviewRatingDrafts.value = Object.fromEntries(
+      reviewRows.map((review) => [review.id, review.review_rating]),
+    );
   } catch (error) {
     errorMessage.value = displayError(error);
   } finally {
@@ -113,6 +139,23 @@ async function archiveQuestion(): Promise<void> {
   }
 }
 
+async function correctReview(review: PracticeReviewItem): Promise<void> {
+  const reviewRating = reviewRatingDrafts.value[review.id];
+  if (!reviewRating || reviewRating === review.review_rating) return;
+  errorMessage.value = "";
+  try {
+    const updated = await request<PracticeReviewItem>(`/api/v1/practice-reviews/${review.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ review_rating: reviewRating }),
+    });
+    reviews.value = reviews.value.map((item) => (item.id === updated.id ? updated : item));
+    reviewRatingDrafts.value[updated.id] = updated.review_rating;
+  } catch (error) {
+    errorMessage.value = displayError(error);
+  }
+}
+
 onMounted(loadQuestion);
 </script>
 
@@ -142,6 +185,33 @@ onMounted(loadQuestion);
         :tags="tags"
         @save="update"
       />
+      <section aria-labelledby="practice-history-title">
+        <h3 id="practice-history-title">练习掌握度历史</h3>
+        <p v-if="reviews.length === 0">暂无练习记录</p>
+        <ol v-else aria-label="练习历史">
+          <li v-for="review in reviews" :key="review.id" :data-review-id="review.id">
+            <time :datetime="review.reviewed_at">{{ review.reviewed_at }}</time>
+            <span>{{ ratingLabel(review.review_rating) }}</span>
+            <select
+              v-model="reviewRatingDrafts[review.id]"
+              :aria-label="`更正掌握度 ${review.id}`"
+            >
+              <option value="dont_know">不会</option>
+              <option value="vague">模糊</option>
+              <option value="basic">基本会</option>
+              <option value="proficient">熟练</option>
+            </select>
+            <button
+              type="button"
+              :aria-label="`保存自评 ${review.id}`"
+              :disabled="reviewRatingDrafts[review.id] === review.review_rating"
+              @click="correctReview(review)"
+            >
+              更正自评
+            </button>
+          </li>
+        </ol>
+      </section>
     </template>
   </section>
 </template>

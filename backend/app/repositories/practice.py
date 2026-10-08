@@ -3,7 +3,7 @@ from __future__ import annotations
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
-from app.models.practice import PracticeSession, SessionItem
+from app.models.practice import PracticeReview, PracticeSession, SessionItem
 from app.models.question import Question, QuestionTag, QuestionTopic
 
 
@@ -45,4 +45,23 @@ def get_session_item(session: Session, session_item_id: int) -> SessionItem | No
 
 def get_session_item_statuses(session: Session, session_id: int) -> list[str]:
     statement = select(SessionItem.status).where(SessionItem.session_id == session_id)
+    return list(session.scalars(statement).all())
+
+
+def add_practice_review(session: Session, review: PracticeReview) -> PracticeReview:
+    session.add(review)
+    session.flush()
+    return review
+
+
+def get_practice_review(session: Session, review_id: int) -> PracticeReview | None:
+    return session.get(PracticeReview, review_id)
+
+
+def list_question_practice_reviews(session: Session, question_id: int) -> list[PracticeReview]:
+    statement = (
+        select(PracticeReview)
+        .where(PracticeReview.question_id == question_id)
+        .order_by(PracticeReview.reviewed_at.desc(), PracticeReview.id.desc())
+    )
     return list(session.scalars(statement).all())
