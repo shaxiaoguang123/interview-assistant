@@ -65,6 +65,34 @@ def test_question_crud_with_topics_and_tags(client):
     assert [item["id"] for item in updated.get_json()["tags"]] == [tag["id"]]
 
 
+def test_question_taxonomy_patch_response_matches_saved_relations(client):
+    first_topic = _create_topic(client, slug="first-topic", name="First Topic")
+    second_topic = _create_topic(client, slug="second-topic", name="Second Topic")
+    first_tag = _create_tag(client, name="First Tag")
+    second_tag = _create_tag(client, name="Second Tag")
+    created = client.post(
+        "/api/v1/questions",
+        json={
+            "text": "Replace taxonomy relationships",
+            "topic_ids": [first_topic["id"]],
+            "tag_ids": [first_tag["id"]],
+        },
+    )
+    question_id = created.get_json()["id"]
+
+    updated = client.patch(
+        f"/api/v1/questions/{question_id}",
+        json={"topic_ids": [second_topic["id"]], "tag_ids": [second_tag["id"]]},
+    )
+
+    assert updated.status_code == 200
+    assert [item["id"] for item in updated.get_json()["topics"]] == [second_topic["id"]]
+    assert [item["id"] for item in updated.get_json()["tags"]] == [second_tag["id"]]
+    reloaded = client.get(f"/api/v1/questions/{question_id}").get_json()
+    assert [item["id"] for item in reloaded["topics"]] == [second_topic["id"]]
+    assert [item["id"] for item in reloaded["tags"]] == [second_tag["id"]]
+
+
 def test_question_rejects_unknown_topic_id(client):
     fields = _error_fields(
         client.post("/api/v1/questions", json={"text": "Question?", "topic_ids": [999999]})

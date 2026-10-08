@@ -62,7 +62,7 @@ def search_questions(session: Session, query: str, filters: dict) -> list:
 
     fts_terms, substring_terms = split_search_terms(normalized_query)
     fts_query = " AND ".join(f'"{term}"' for term in fts_terms) or None
-    return question_repository.search_question_rows(
+    results = question_repository.search_question_rows(
         session,
         fts_query=fts_query,
         substring_terms=substring_terms,
@@ -72,3 +72,22 @@ def search_questions(session: Session, query: str, filters: dict) -> list:
         is_favorite=is_favorite,
         is_wrong=is_wrong,
     )
+    if not fts_terms:
+        return results
+
+    # FTS5's unicode61 tokenizer can merge adjacent Latin and CJK text into
+    # one token. A substring pass also finds older rows that have no script
+    # boundary in search_text.
+    fallback_terms = list(dict.fromkeys([*fts_terms, *substring_terms]))
+    fallback_results = question_repository.search_question_rows(
+        session,
+        fts_query=None,
+        substring_terms=fallback_terms,
+        include_archived=include_archived,
+        topic_ids=topic_ids,
+        tag_ids=tag_ids,
+        is_favorite=is_favorite,
+        is_wrong=is_wrong,
+    )
+    seen_ids = {question.id for question in results}
+    return results + [question for question in fallback_results if question.id not in seen_ids]

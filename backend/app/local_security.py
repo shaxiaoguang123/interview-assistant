@@ -33,9 +33,18 @@ def validate_local_request() -> None:
         return
 
     origin = origin.rstrip("/")
-    origin_parts = urlsplit(origin)
-    origin_host = origin_parts.hostname
-    if origin_parts.scheme not in {"http", "https"} or origin_host is None or origin_host.lower() not in LOOPBACK_HOSTS:
+    try:
+        origin_parts = urlsplit(origin)
+        origin_host = origin_parts.hostname
+    except ValueError:
+        origin_parts = None
+        origin_host = None
+    if (
+        origin_parts is None
+        or origin_parts.scheme not in {"http", "https"}
+        or origin_host is None
+        or origin_host.lower() not in LOOPBACK_HOSTS
+    ):
         raise ApiError(
             400,
             "VALIDATION_ERROR",

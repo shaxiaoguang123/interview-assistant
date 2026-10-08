@@ -133,6 +133,10 @@ def update_question(session: Session, question_id: int, payload: dict) -> Questi
                 tags = validate_active_tag_ids(session, payload["tag_ids"])
                 question_repository.replace_question_tags(session, question_id, [tag.id for tag in tags])
             session.flush()
+            if "topic_ids" in payload:
+                session.expire(question, ["topic_links"])
+            if "tag_ids" in payload:
+                session.expire(question, ["tag_links"])
         return question_repository.get_question(session, question_id) or question
     except IntegrityError as error:
         raise ApiError(409, "CONFLICT", "Question could not be updated") from error

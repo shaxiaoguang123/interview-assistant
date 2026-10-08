@@ -1,3 +1,6 @@
+import pytest
+
+
 def assert_error_envelope(response, status_code, error_code):
     assert response.status_code == status_code
     payload = response.get_json()
@@ -60,6 +63,18 @@ def test_external_origin_is_rejected_with_error_envelope(client):
         "/api/v1/health",
         base_url="http://localhost:5000",
         headers={"Origin": "https://attacker.example"},
+    )
+
+    error = assert_error_envelope(response, 400, "VALIDATION_ERROR")
+    assert "origin" in error.get("fields", {})
+
+
+@pytest.mark.parametrize("origin", ["http://[", "http://[bad]"])
+def test_malformed_origin_is_rejected_with_error_envelope(client, origin):
+    response = client.get(
+        "/api/v1/health",
+        base_url="http://localhost:5000",
+        headers={"Origin": origin},
     )
 
     error = assert_error_envelope(response, 400, "VALIDATION_ERROR")

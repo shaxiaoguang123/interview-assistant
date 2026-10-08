@@ -33,6 +33,14 @@ interface PracticeReviewItem {
   updated_at: string;
 }
 
+interface QuestionFormPayload {
+  text: string;
+  answer_type: string | null;
+  difficulty: string | null;
+  topic_ids: number[];
+  tag_ids: number[];
+}
+
 const route = useRoute();
 const question = ref<QuestionDetail | null>(null);
 const reviews = ref<PracticeReviewItem[]>([]);
@@ -67,6 +75,10 @@ function mergeHistoricalItems<T extends TaxonomyItem>(activeItems: T[], linkedIt
   return [...byId.values()];
 }
 
+function sameIds(left: number[], right: number[]): boolean {
+  return left.length === right.length && left.every((id) => right.includes(id));
+}
+
 async function loadQuestion(): Promise<void> {
   loading.value = true;
   errorMessage.value = "";
@@ -91,19 +103,26 @@ async function loadQuestion(): Promise<void> {
   }
 }
 
-async function update(payload: {
-  text: string;
-  answer_type: string | null;
-  difficulty: string | null;
-  topic_ids: number[];
-  tag_ids: number[];
-}): Promise<void> {
+async function update(payload: QuestionFormPayload): Promise<void> {
+  const currentQuestion = question.value;
+  if (!currentQuestion) return;
+
+  const patch: Partial<QuestionFormPayload> = {
+    text: payload.text,
+    answer_type: payload.answer_type,
+    difficulty: payload.difficulty,
+  };
+  const currentTopicIds = currentQuestion.topics.map((item) => item.id);
+  const currentTagIds = currentQuestion.tags.map((item) => item.id);
+  if (!sameIds(payload.topic_ids, currentTopicIds)) patch.topic_ids = payload.topic_ids;
+  if (!sameIds(payload.tag_ids, currentTagIds)) patch.tag_ids = payload.tag_ids;
+
   errorMessage.value = "";
   try {
     question.value = await request<QuestionDetail>(`/api/v1/questions/${questionId.value}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
+      body: JSON.stringify(patch),
     });
   } catch (error) {
     errorMessage.value = displayError(error);
@@ -162,8 +181,18 @@ onMounted(loadQuestion);
 <template>
   <section aria-labelledby="question-detail-title">
     <p v-if="loading">正在加载题目…</p>
-    <p v-else-if="errorMessage" role="alert">{{ errorMessage }}</p>
-    <template v-else-if="question">
+    <template v-if="errorMessage">
+      <p role="alert">{{ errorMessage }}</p>
+      <button
+        v-if="!question"
+        type="button"
+        aria-label="重试加载题目详情"
+        @click="loadQuestion"
+      >
+        重试加载
+      </button>
+    </template>
+    <template v-if="!loading && question">
       <h2 id="question-detail-title">题目详情</h2>
       <p v-if="question.archived_at">已归档</p>
       <p v-else>状态：{{ question.status }}</p>

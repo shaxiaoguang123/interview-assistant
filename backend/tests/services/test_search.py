@@ -69,6 +69,23 @@ def test_mixed_chinese_english_queries(client, db_session):
         assert result_ids == [expected_id]
 
 
+def test_mixed_chinese_english_search_without_script_spacing_and_after_edit(client, db_session):
+    expected = _add_question(db_session, "LangGraph持久化如何实现？")
+
+    for query in ("LangGraph", "LangGraph 持久化", "LangGraph持久化"):
+        response = client.get("/api/v1/questions", query_string={"q": query})
+        assert response.status_code == 200
+        assert [item["id"] for item in response.get_json()] == [expected.id]
+
+    updated = client.patch(
+        f"/api/v1/questions/{expected.id}", json={"text": "MCP通信协议如何工作？"}
+    )
+    assert updated.status_code == 200
+    assert updated.get_json()["text"] == "MCP通信协议如何工作？"
+    assert [item["id"] for item in client.get("/api/v1/questions?q=MCP").get_json()] == [expected.id]
+    assert client.get("/api/v1/questions?q=LangGraph").get_json() == []
+
+
 def test_case_insensitive_english(client, db_session):
     expected = _add_question(db_session, "Use LangGraph to implement memory.")
     _add_question(db_session, "Use RAG to improve search.")

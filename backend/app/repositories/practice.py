@@ -1,6 +1,9 @@
 from __future__ import annotations
 
-from sqlalchemy import select
+from datetime import datetime
+from typing import Literal
+
+from sqlalchemy import select, update
 from sqlalchemy.orm import Session, selectinload
 
 from app.models.practice import PracticeReview, PracticeSession, SessionItem
@@ -41,6 +44,22 @@ def get_practice_session(session: Session, session_id: int) -> PracticeSession |
 
 def get_session_item(session: Session, session_item_id: int) -> SessionItem | None:
     return session.get(SessionItem, session_item_id)
+
+
+def transition_shown_session_item(
+    session: Session,
+    session_item_id: int,
+    *,
+    status: Literal["completed", "skipped"],
+    completed_at: datetime,
+) -> bool:
+    result = session.execute(
+        update(SessionItem)
+        .where(SessionItem.id == session_item_id, SessionItem.status == "shown")
+        .values(status=status, completed_at=completed_at)
+        .execution_options(synchronize_session=False)
+    )
+    return result.rowcount == 1
 
 
 def get_session_item_statuses(session: Session, session_id: int) -> list[str]:

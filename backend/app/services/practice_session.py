@@ -33,8 +33,13 @@ def skip_session_item(session: Session, session_item_id: int) -> tuple[SessionIt
         if item.status != "shown":
             raise ApiError(409, "CONFLICT", "Session item is already in a terminal state")
 
+        now = datetime.now(timezone.utc)
+        if not practice_repository.transition_shown_session_item(
+            session, item.id, status="skipped", completed_at=now
+        ):
+            raise ApiError(409, "CONFLICT", "SessionItem has already reached a terminal state")
         item.status = "skipped"
-        item.completed_at = datetime.now(timezone.utc)
+        item.completed_at = now
         session.flush()
         mark_session_completed_if_terminal(session, practice_session)
         session.flush()

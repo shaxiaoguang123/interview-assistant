@@ -140,6 +140,193 @@ describe("rule-based practice", () => {
     expect(wrapper.text()).toContain("本次练习已完成");
   });
 
+  it("disables rating while a skip request is pending", async () => {
+    const sessionModules = import.meta.glob("../src/pages/PracticeSessionPage.vue", { eager: true });
+    const sessionModule = sessionModules["../src/pages/PracticeSessionPage.vue"] as
+      | { default?: object }
+      | undefined;
+    expect(sessionModule).toBeDefined();
+    const SessionPage = sessionModule!.default;
+    let itemStatus: "shown" | "skipped" = "shown";
+    let finishSkip: (() => void) | undefined;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = String(input);
+      if (path === "/api/v1/practice-sessions/5" && (init?.method ?? "GET") === "GET") {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            id: 5,
+            mode: "random",
+            selector_version: "v1",
+            selection_seed: 123,
+            started_at: "2026-10-08T00:00:00Z",
+            completed_at: itemStatus === "skipped" ? "2026-10-08T00:01:00Z" : null,
+            items: [
+              {
+                id: 51,
+                question_id: 2,
+                ordinal: 1,
+                status: itemStatus,
+                question: { id: 2, text: "Skip in progress", status: "active", archived_at: null },
+              },
+            ],
+          }),
+        } as Response;
+      }
+      if (path === "/api/v1/session-items/51/skip" && init?.method === "POST") {
+        return await new Promise<Response>((resolve) => {
+          finishSkip = () => {
+            itemStatus = "skipped";
+            resolve({ ok: true, status: 200, json: async () => ({}) } as Response);
+          };
+        });
+      }
+      throw new Error(`Unexpected request: ${String(init?.method ?? "GET")} ${path}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const router = createAppRouter(createMemoryHistory());
+    await router.push("/practice/sessions/5");
+    await router.isReady();
+    const wrapper = mount(SessionPage!, { global: { plugins: [router] } });
+    await flushPromises();
+    const skipButton = wrapper.findAll("button").find((button) => button.text().includes("跳过此题"));
+    await skipButton!.trigger("click");
+    await flushPromises();
+
+    const ratingButtons = wrapper.findAll("fieldset[aria-label='本次掌握程度'] button");
+    expect(ratingButtons).toHaveLength(4);
+    expect(ratingButtons.every((button) => (button.element as HTMLButtonElement).disabled)).toBe(true);
+
+    finishSkip?.();
+    await flushPromises();
+    expect(wrapper.text()).toContain("本次练习已完成");
+  });
+
+  it("keeps rating controls available after a Review request error", async () => {
+    const sessionModules = import.meta.glob("../src/pages/PracticeSessionPage.vue", { eager: true });
+    const sessionModule = sessionModules["../src/pages/PracticeSessionPage.vue"] as
+      | { default?: object }
+      | undefined;
+    expect(sessionModule).toBeDefined();
+    const SessionPage = sessionModule!.default;
+    let completed = false;
+    let reviewAttempts = 0;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = String(input);
+      if (path === "/api/v1/practice-sessions/5" && (init?.method ?? "GET") === "GET") {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            id: 5,
+            mode: "random",
+            selector_version: "v1",
+            selection_seed: 123,
+            started_at: "2026-10-08T00:00:00Z",
+            completed_at: completed ? "2026-10-08T00:01:00Z" : null,
+            items: [
+              {
+                id: 51,
+                question_id: 2,
+                ordinal: 1,
+                status: completed ? "completed" : "shown",
+                question: { id: 2, text: "Retry Review", status: "active", archived_at: null },
+              },
+            ],
+          }),
+        } as Response;
+      }
+      if (path === "/api/v1/session-items/51/review" && init?.method === "POST") {
+        reviewAttempts += 1;
+        if (reviewAttempts === 1) {
+          return {
+            ok: false,
+            status: 500,
+            json: async () => ({ error: { code: "INTERNAL_ERROR", message: "Temporary failure" } }),
+          } as Response;
+        }
+        completed = true;
+        return { ok: true, status: 201, json: async () => ({}) } as Response;
+      }
+      throw new Error(`Unexpected request: ${String(init?.method ?? "GET")} ${path}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const router = createAppRouter(createMemoryHistory());
+    await router.push("/practice/sessions/5");
+    await router.isReady();
+    const wrapper = mount(SessionPage!, { global: { plugins: [router] } });
+    await flushPromises();
+    await wrapper.get("button[aria-label='自评基本会']").trigger("click");
+    await flushPromises();
+
+    expect(wrapper.get("[role='alert']").text()).toContain("Temporary failure");
+    expect(wrapper.get("button[aria-label='自评基本会']").exists()).toBe(true);
+    await wrapper.get("button[aria-label='自评基本会']").trigger("click");
+    await flushPromises();
+
+    expect(reviewAttempts).toBe(2);
+    expect(wrapper.text()).toContain("本次练习已完成");
+  });
+
+  it("offers a retry after the initial session request fails", async () => {
+    const sessionModules = import.meta.glob("../src/pages/PracticeSessionPage.vue", { eager: true });
+    const sessionModule = sessionModules["../src/pages/PracticeSessionPage.vue"] as
+      | { default?: object }
+      | undefined;
+    expect(sessionModule).toBeDefined();
+    let sessionAttempts = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        sessionAttempts += 1;
+        if (sessionAttempts === 1) {
+          return {
+            ok: false,
+            status: 500,
+            json: async () => ({ error: { code: "INTERNAL_ERROR", message: "Temporary failure" } }),
+          } as Response;
+        }
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            id: 5,
+            mode: "random",
+            selector_version: "v1",
+            selection_seed: 123,
+            started_at: "2026-10-08T00:00:00Z",
+            completed_at: null,
+            items: [
+              {
+                id: 51,
+                question_id: 2,
+                ordinal: 1,
+                status: "shown",
+                question: { id: 2, text: "Retry this session load", status: "active", archived_at: null },
+              },
+            ],
+          }),
+        } as Response;
+      }),
+    );
+
+    const router = createAppRouter(createMemoryHistory());
+    await router.push("/practice/sessions/5");
+    await router.isReady();
+    const wrapper = mount(sessionModule!.default!, { global: { plugins: [router] } });
+    await flushPromises();
+
+    expect(wrapper.get("[role='alert']").text()).toContain("Temporary failure");
+    await wrapper.get("button[aria-label='重试加载练习']").trigger("click");
+    await flushPromises();
+
+    expect(sessionAttempts).toBe(2);
+    expect(wrapper.text()).toContain("Retry this session load");
+  });
+
   it("corrects a review in place without creating another Review", async () => {
     const detailModules = import.meta.glob("../src/pages/QuestionDetailPage.vue", { eager: true });
     const detailModule = detailModules["../src/pages/QuestionDetailPage.vue"] as

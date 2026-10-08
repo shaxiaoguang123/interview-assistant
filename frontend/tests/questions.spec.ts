@@ -1,6 +1,8 @@
 import { flushPromises, mount } from "@vue/test-utils";
 import { defineComponent, h } from "vue";
 import { describe, expect, it, vi } from "vitest";
+import { createMemoryHistory } from "vue-router";
+import { createAppRouter } from "../src/router";
 
 const topics = [{ id: 1, name: "RAG", is_active: true }];
 const tags = [{ id: 2, name: "Retrieval", is_active: true }];
@@ -184,5 +186,159 @@ describe("manual question bank", () => {
     await flushPromises();
 
     expect(wrapper.get("[role='alert']").text()).toContain("Question text is required");
+  });
+
+  it("omits unchanged inactive taxonomy when editing question text", async () => {
+    const pageModules = import.meta.glob("../src/pages/QuestionDetailPage.vue", { eager: true });
+    const pageModule = pageModules["../src/pages/QuestionDetailPage.vue"] as
+      | { default?: object }
+      | undefined;
+    expect(pageModule, "missing feature: QuestionDetailPage.vue").toBeDefined();
+    const topic = { id: 8, parent_id: null, slug: "inactive", name: "Legacy Topic", is_active: false };
+    const tag = { id: 9, name: "Legacy Tag", is_active: false };
+    let question = { ...makeQuestion(1, "Original question"), topics: [topic], tags: [tag] };
+    let patchBody: Record<string, unknown> | null = null;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const path = String(input);
+        if (path === "/api/v1/questions/1" && (init?.method ?? "GET") === "GET") {
+          return { ok: true, status: 200, json: async () => question } as Response;
+        }
+        if (path === "/api/v1/topics" || path === "/api/v1/tags") {
+          return { ok: true, status: 200, json: async () => [] } as Response;
+        }
+        if (path === "/api/v1/questions/1/practice-reviews") {
+          return { ok: true, status: 200, json: async () => [] } as Response;
+        }
+        if (path === "/api/v1/questions/1" && init?.method === "PATCH") {
+          patchBody = JSON.parse(String(init.body));
+          question = { ...question, text: String(patchBody.text) };
+          return { ok: true, status: 200, json: async () => question } as Response;
+        }
+        throw new Error(`Unexpected request: ${String(init?.method ?? "GET")} ${path}`);
+      }),
+    );
+
+    const router = createAppRouter(createMemoryHistory());
+    await router.push("/questions/1");
+    await router.isReady();
+    const wrapper = mount(pageModule!.default!, { global: { plugins: [router] } });
+    await flushPromises();
+    await wrapper.get("textarea[aria-label='题目正文']").setValue("Updated question text");
+    await wrapper.get("form[aria-label='题目表单']").trigger("submit.prevent");
+    await flushPromises();
+
+    expect(patchBody).toMatchObject({ text: "Updated question text" });
+    expect(patchBody).not.toHaveProperty("topic_ids");
+    expect(patchBody).not.toHaveProperty("tag_ids");
+    expect(wrapper.text()).toContain("Legacy Topic");
+  });
+
+  it("keeps the question form available after a validation error", async () => {
+    const pageModules = import.meta.glob("../src/pages/QuestionDetailPage.vue", { eager: true });
+    const pageModule = pageModules["../src/pages/QuestionDetailPage.vue"] as
+      | { default?: object }
+      | undefined;
+    expect(pageModule).toBeDefined();
+    let question = makeQuestion(1, "Question that can be corrected");
+    let patchCount = 0;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = String(input);
+      if (path === "/api/v1/questions/1" && (init?.method ?? "GET") === "GET") {
+        return { ok: true, status: 200, json: async () => question } as Response;
+      }
+      if (path === "/api/v1/topics" || path === "/api/v1/tags") {
+        return { ok: true, status: 200, json: async () => [] } as Response;
+      }
+      if (path === "/api/v1/questions/1/practice-reviews") {
+        return { ok: true, status: 200, json: async () => [] } as Response;
+      }
+      if (path === "/api/v1/questions/1" && init?.method === "PATCH") {
+        patchCount += 1;
+        const body = JSON.parse(String(init.body));
+        if (patchCount === 1) {
+          return {
+            ok: false,
+            status: 400,
+            json: async () => ({
+              error: { code: "VALIDATION_ERROR", message: "Invalid question", fields: { text: "Invalid" } },
+            }),
+          } as Response;
+        }
+        question = { ...question, text: body.text };
+        return { ok: true, status: 200, json: async () => question } as Response;
+      }
+      throw new Error(`Unexpected request: ${String(init?.method ?? "GET")} ${path}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const router = createAppRouter(createMemoryHistory());
+    await router.push("/questions/1");
+    await router.isReady();
+    const wrapper = mount(pageModule!.default!, { global: { plugins: [router] } });
+    await flushPromises();
+    const textarea = wrapper.get("textarea[aria-label='题目正文']");
+    await textarea.setValue("   ");
+    await wrapper.get("form[aria-label='题目表单']").trigger("submit.prevent");
+    await flushPromises();
+
+    expect(wrapper.get("[role='alert']").text()).toContain("Invalid");
+    expect(wrapper.get("form[aria-label='题目表单']").exists()).toBe(true);
+    await wrapper.get("textarea[aria-label='题目正文']").setValue("Corrected question");
+    await wrapper.get("form[aria-label='题目表单']").trigger("submit.prevent");
+    await flushPromises();
+
+    expect(patchCount).toBe(2);
+    expect(wrapper.text()).toContain("练习掌握度历史");
+  });
+
+  it("offers a retry after the initial detail request fails", async () => {
+    const pageModules = import.meta.glob("../src/pages/QuestionDetailPage.vue", { eager: true });
+    const pageModule = pageModules["../src/pages/QuestionDetailPage.vue"] as
+      | { default?: object }
+      | undefined;
+    expect(pageModule).toBeDefined();
+    let detailAttempts = 0;
+    const question = makeQuestion(1, "Retry this detail load");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const path = String(input);
+        if (path === "/api/v1/questions/1") {
+          detailAttempts += 1;
+          if (detailAttempts === 1) {
+            return {
+              ok: false,
+              status: 500,
+              json: async () => ({ error: { code: "INTERNAL_ERROR", message: "Temporary failure" } }),
+            } as Response;
+          }
+          return { ok: true, status: 200, json: async () => question } as Response;
+        }
+        if (path === "/api/v1/topics" || path === "/api/v1/tags") {
+          return { ok: true, status: 200, json: async () => [] } as Response;
+        }
+        if (path === "/api/v1/questions/1/practice-reviews") {
+          return { ok: true, status: 200, json: async () => [] } as Response;
+        }
+        throw new Error(`Unexpected request: ${path}`);
+      }),
+    );
+
+    const router = createAppRouter(createMemoryHistory());
+    await router.push("/questions/1");
+    await router.isReady();
+    const wrapper = mount(pageModule!.default!, { global: { plugins: [router] } });
+    await flushPromises();
+
+    expect(wrapper.get("[role='alert']").text()).toContain("Temporary failure");
+    await wrapper.get("button[aria-label='重试加载题目详情']").trigger("click");
+    await flushPromises();
+
+    expect(detailAttempts).toBe(2);
+    expect((wrapper.get("textarea[aria-label='题目正文']").element as HTMLTextAreaElement).value).toBe(
+      "Retry this detail load",
+    );
   });
 });

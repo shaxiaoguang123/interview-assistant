@@ -57,7 +57,7 @@ async function loadSession(): Promise<void> {
 }
 
 async function skipCurrentItem(): Promise<void> {
-  if (!currentItem.value) return;
+  if (!currentItem.value || skipping.value || reviewing.value) return;
   errorMessage.value = "";
   skipping.value = true;
   try {
@@ -72,7 +72,7 @@ async function skipCurrentItem(): Promise<void> {
 }
 
 async function recordRating(reviewRating: string): Promise<void> {
-  if (!currentItem.value) return;
+  if (!currentItem.value || skipping.value || reviewing.value) return;
   errorMessage.value = "";
   reviewing.value = true;
   try {
@@ -100,8 +100,18 @@ onMounted(loadSession);
 <template>
   <section aria-labelledby="practice-session-title">
     <p v-if="loading">正在加载练习…</p>
-    <p v-else-if="errorMessage" role="alert">{{ errorMessage }}</p>
-    <template v-else-if="practiceSession">
+    <template v-if="errorMessage">
+      <p role="alert">{{ errorMessage }}</p>
+      <button
+        v-if="!practiceSession"
+        type="button"
+        aria-label="重试加载练习"
+        @click="loadSession"
+      >
+        重试加载
+      </button>
+    </template>
+    <template v-if="!loading && practiceSession">
       <h2 id="practice-session-title">练习会话 #{{ practiceSession.id }}</h2>
       <p v-if="practiceSession.completed_at">本次练习已完成</p>
       <template v-else-if="currentItem">
@@ -113,7 +123,7 @@ onMounted(loadSession);
           <textarea v-model="answerDraft" aria-label="临时回答" />
         </label>
         <button type="button" @click="rewriteDraft">重新回答</button>
-        <PracticeRating :disabled="reviewing" @rate="recordRating" />
+        <PracticeRating :disabled="reviewing || skipping" @rate="recordRating" />
         <button type="button" :disabled="skipping || reviewing" @click="skipCurrentItem">
           {{ skipping ? "正在跳过…" : "跳过此题" }}
         </button>

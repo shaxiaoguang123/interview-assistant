@@ -47,6 +47,10 @@ def record_practice_review(session: Session, session_item_id: int, review_rating
                 raise ApiError(409, "CONFLICT", "SessionItem is not available for review")
 
             now = utc_now()
+            if not practice_repository.transition_shown_session_item(
+                session, item.id, status="completed", completed_at=now
+            ):
+                raise ApiError(409, "CONFLICT", "SessionItem has already reached a terminal state")
             item.status = "completed"
             item.completed_at = now
             review = PracticeReview(
