@@ -4,12 +4,20 @@ from io import BytesIO
 from pathlib import Path
 import threading
 from queue import Queue
+from datetime import datetime, timezone
 
 from PIL import Image
 from werkzeug.datastructures import FileStorage
 
 from app import create_app
-from app.models.ingestion import IngestionJob
+from app.models.ingestion import (
+    IngestionJob,
+    OCRBlock,
+    QuestionSource,
+    QuestionSourceOCRBlock,
+)
+from app.models.question import Question
+from app.ocr.adapter import OCRDetection
 from app.services.source_storage import save_source_file
 
 
@@ -190,3 +198,233 @@ def test_supported_runner_recovers_once_with_reloader_disabled(monkeypatch):
     assert calls[1][0] == "run"
     assert calls[1][1]["use_reloader"] is False
     assert calls[1][1]["debug"] is True
+
+
+def test_candidate_query_includes_pending_confirmed_rejected_and_superseded(client, app):
+    source, job = _upload_source(client)
+    now = datetime.now(timezone.utc)
+    rows = [
+        Question(
+            text="pending candidate",
+            normalized_text="pending candidate",
+            search_text="pending candidate",
+            normalized_hash="pending-hash",
+            status="pending_review",
+            origin_ingestion_job_id=job["id"],
+            ingestion_candidate_state="pending_review",
+        ),
+        Question(
+            text="confirmed candidate",
+            normalized_text="confirmed candidate",
+            search_text="confirmed candidate",
+            normalized_hash="confirmed-hash",
+            status="active",
+            origin_ingestion_job_id=job["id"],
+            ingestion_candidate_state="confirmed",
+        ),
+        Question(
+            text="rejected candidate",
+            normalized_text="rejected candidate",
+            search_text="rejected candidate",
+            normalized_hash="rejected-hash",
+            status="pending_review",
+            origin_ingestion_job_id=job["id"],
+            ingestion_candidate_state="rejected",
+            archived_at=now,
+        ),
+        Question(
+            text="superseded candidate",
+            normalized_text="superseded candidate",
+            search_text="superseded candidate",
+            normalized_hash="superseded-hash",
+            status="pending_review",
+            origin_ingestion_job_id=job["id"],
+            ingestion_candidate_state="superseded",
+            archived_at=now,
+        ),
+    ]
+    with app.extensions["sqlalchemy_session_factory"].begin() as session:
+        session.add_all(rows)
+
+    response = client.get(f"/api/v1/ingestions/{job['id']}/candidates")
+
+    assert response.status_code == 200
+    assert {item["candidate_state"] for item in response.get_json()} == {
+        "pending_review",
+        "confirmed",
+        "rejected",
+        "superseded",
+    }
+    assert {item["source_asset_id"] for item in response.get_json()} == {source["id"]}
+
+
+def test_candidate_query_returns_split_parent_children_and_superseded_target(client, app):
+    _, job = _upload_source(client)
+    with app.extensions["sqlalchemy_session_factory"].begin() as session:
+        parent = Question(
+            text="split parent",
+            normalized_text="split parent",
+            search_text="split parent",
+            normalized_hash="lineage-parent",
+            status="pending_review",
+            origin_ingestion_job_id=job["id"],
+            ingestion_candidate_state="superseded",
+            archived_at=datetime.now(timezone.utc),
+        )
+        survivor = Question(
+            text="merge survivor",
+            normalized_text="merge survivor",
+            search_text="merge survivor",
+            normalized_hash="lineage-survivor",
+            status="pending_review",
+            origin_ingestion_job_id=job["id"],
+            ingestion_candidate_state="pending_review",
+        )
+        session.add_all([parent, survivor])
+        session.flush()
+        child = Question(
+            text="split child",
+            normalized_text="split child",
+            search_text="split child",
+            normalized_hash="lineage-child",
+            status="pending_review",
+            origin_ingestion_job_id=job["id"],
+            ingestion_candidate_state="pending_review",
+            split_from_candidate_id=parent.id,
+        )
+        loser = Question(
+            text="merge loser",
+            normalized_text="merge loser",
+            search_text="merge loser",
+            normalized_hash="lineage-loser",
+            status="pending_review",
+            origin_ingestion_job_id=job["id"],
+            ingestion_candidate_state="superseded",
+            archived_at=datetime.now(timezone.utc),
+            superseded_by_candidate_id=survivor.id,
+        )
+        session.add_all([child, loser])
+        session.flush()
+        child_ids = [child.id]
+        parent_id = parent.id
+        survivor_id = survivor.id
+        loser_id = loser.id
+
+    candidates = client.get(
+        f"/api/v1/ingestions/{job['id']}/candidates"
+    ).get_json()
+    by_id = {candidate["id"]: candidate for candidate in candidates}
+    assert by_id[parent_id]["split_child_ids"] == child_ids
+    assert by_id[child_ids[0]]["split_from_candidate_id"] == parent_id
+    assert by_id[loser_id]["superseded_by_candidate_id"] == survivor_id
+
+
+def test_candidate_status_filter_and_wrong_job_scope(client, app):
+    _, job = _upload_source(client)
+    _, other_job = _upload_source(client)
+    with app.extensions["sqlalchemy_session_factory"].begin() as session:
+        session.add(
+            Question(
+                text="only first job candidate",
+                normalized_text="only first job candidate",
+                search_text="only first job candidate",
+                normalized_hash="only-first-job",
+                status="pending_review",
+                origin_ingestion_job_id=job["id"],
+                ingestion_candidate_state="pending_review",
+            )
+        )
+
+    pending = client.get(
+        f"/api/v1/ingestions/{job['id']}/candidates?status=pending_review"
+    )
+    other = client.get(f"/api/v1/ingestions/{other_job['id']}/candidates")
+    invalid = client.get(f"/api/v1/ingestions/{job['id']}/candidates?status=unknown")
+
+    assert pending.status_code == 200
+    assert len(pending.get_json()) == 1
+    assert other.status_code == 200
+    assert other.get_json() == []
+    assert invalid.status_code == 400
+    assert invalid.get_json()["error"]["code"] == "VALIDATION_ERROR"
+
+
+def test_candidate_query_contains_raw_source_and_stable_ocr_block(client, app):
+    source, job = _upload_source(client)
+    with app.extensions["sqlalchemy_session_factory"].begin() as session:
+        block = OCRBlock(
+            ingestion_job_id=job["id"],
+            text="Which tool protocol?",
+            bbox_json={"x": 0.1, "y": 0.2, "width": 0.7, "height": 0.1},
+            reading_order=0,
+            confidence=0.99,
+        )
+        candidate = Question(
+            text="Which tool protocol?",
+            normalized_text="which tool protocol?",
+            search_text="which tool protocol?",
+            normalized_hash="source-evidence-question",
+            status="pending_review",
+            origin_ingestion_job_id=job["id"],
+            ingestion_candidate_state="pending_review",
+        )
+        session.add_all([block, candidate])
+        session.flush()
+        source_row = QuestionSource(
+            question_id=candidate.id,
+            source_asset_id=source["id"],
+            locator_type="image_region",
+            locator_json={"x": 0.1, "y": 0.2, "width": 0.7, "height": 0.1},
+            source_text_snapshot="Which tool protocol?",
+            raw_ocr_text_snapshot="Which tool protocol?",
+        )
+        session.add(source_row)
+        session.flush()
+        session.add(
+            QuestionSourceOCRBlock(
+                question_source_id=source_row.id,
+                ocr_block_id=block.id,
+            )
+        )
+        block_id = block.id
+
+    response = client.get(f"/api/v1/ingestions/{job['id']}/candidates")
+    candidate_json = response.get_json()[0]
+    source_json = candidate_json["sources"][0]
+
+    assert response.status_code == 200
+    assert source_json["source_text_snapshot"] == "Which tool protocol?"
+    assert source_json["raw_ocr_text_snapshot"] == "Which tool protocol?"
+    assert source_json["ocr_blocks"][0]["id"] == block_id
+
+
+def test_unconfirmed_candidate_is_absent_from_default_list_search_and_practice(app):
+    import uuid
+
+    client = app.test_client()
+    detection = OCRDetection(
+        id=str(uuid.uuid4()),
+        text="What is MCP?",
+        bbox=(0.1, 0.1, 0.6, 0.15),
+        confidence=0.98,
+        reading_order=0,
+    )
+    app.config["OCR_ADAPTER_FACTORY"] = lambda: _fake_adapter([detection])
+    _, job = _upload_source(client)
+    run = client.post(f"/api/v1/ingestions/{job['id']}/run")
+    assert run.status_code == 200
+    assert run.get_json()["job"]["status"] == "succeeded"
+
+    listing = client.get("/api/v1/questions")
+    search = client.get("/api/v1/questions?q=MCP")
+    practice = client.post(
+        "/api/v1/practice-sessions",
+        json={"mode": "random", "filters": {}, "limit": 5},
+    )
+
+    assert listing.status_code == 200
+    assert listing.get_json() == []
+    assert search.status_code == 200
+    assert search.get_json() == []
+    assert practice.status_code == 201
+    assert practice.get_json()["items"] == []

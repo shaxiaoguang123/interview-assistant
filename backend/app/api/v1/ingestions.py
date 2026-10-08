@@ -44,7 +44,7 @@ def _ocr_block_json(block: OCRBlock) -> dict:
     }
 
 
-def _candidate_json(candidate, child_ids: list[int]) -> dict:
+def _candidate_json(candidate, child_ids: list[int], source_asset_id: int) -> dict:
     sources = []
     for source in sorted(candidate.source_rows, key=lambda item: item.id):
         blocks = sorted(
@@ -72,6 +72,7 @@ def _candidate_json(candidate, child_ids: list[int]) -> dict:
         "candidate_state": candidate.ingestion_candidate_state,
         "candidate_revision": candidate.candidate_revision,
         "origin_ingestion_job_id": candidate.origin_ingestion_job_id,
+        "source_asset_id": source_asset_id,
         "split_from_candidate_id": candidate.split_from_candidate_id,
         "split_child_ids": child_ids,
         "superseded_by_candidate_id": candidate.superseded_by_candidate_id,
@@ -90,7 +91,8 @@ def get_ingestion(job_id: int):
 @blueprint.get("/ingestions/<int:job_id>/ocr-blocks")
 def get_ingestion_ocr_blocks(job_id: int):
     session: Session = get_session()
-    if get_ingestion_job(session, job_id) is None:
+    job = get_ingestion_job(session, job_id)
+    if job is None:
         raise ApiError(404, "NOT_FOUND", "Ingestion job not found")
     return jsonify([_ocr_block_json(block) for block in list_ocr_blocks(session, job_id)])
 
@@ -98,7 +100,8 @@ def get_ingestion_ocr_blocks(job_id: int):
 @blueprint.get("/ingestions/<int:job_id>/candidates")
 def get_ingestion_candidates(job_id: int):
     session: Session = get_session()
-    if get_ingestion_job(session, job_id) is None:
+    job = get_ingestion_job(session, job_id)
+    if job is None:
         raise ApiError(404, "NOT_FOUND", "Ingestion job not found")
     status_filter = request.args.get("status", "all")
     if status_filter not in _CANDIDATE_FILTERS:
@@ -116,7 +119,11 @@ def get_ingestion_candidates(job_id: int):
     )
     return jsonify(
         [
-            _candidate_json(candidate, child_ids.get(candidate.id, []))
+            _candidate_json(
+                candidate,
+                child_ids.get(candidate.id, []),
+                job.source_asset_id,
+            )
             for candidate in candidates
         ]
     )
