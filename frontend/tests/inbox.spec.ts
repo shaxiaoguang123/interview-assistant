@@ -110,6 +110,14 @@ function job(id: number, status = "queued", sourceAssetId = id) {
   };
 }
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
+
 async function submitFiles(wrapper: ReturnType<typeof mount>, count: number) {
   const input = wrapper.get("input[type=file]").element as HTMLInputElement;
   const files = Array.from({ length: count }, (_, index) =>
@@ -224,6 +232,79 @@ describe("screenshot inbox and OCR viewer", () => {
 
     expect(fetchMock.mock.calls.filter(([path]) => path === "/api/v1/ingestions/11/run")).toHaveLength(1);
     expect(statusReads).toBeGreaterThanOrEqual(2);
+  });
+
+  it("can resume a persisted queued job after reloading the inbox", async () => {
+    loadComponent(uploadGlob, "missing SourceUpload.vue");
+    const Page = loadComponent(inboxGlob, "missing InboxPage.vue");
+    const records = [source(1, [job(11, "queued", 1)])];
+    const requests: string[] = [];
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = String(input);
+      requests.push(path);
+      if (path === "/api/v1/sources" || path === "/api/v1/topics" || path === "/api/v1/tags") {
+        return { ok: true, status: 200, json: async () => path === "/api/v1/sources" ? records : [] } as Response;
+      }
+      if (path === "/api/v1/ingestions/11" && !init?.method) {
+        return { ok: true, status: 200, json: async () => ({ job: job(11, "queued", 1) }) } as Response;
+      }
+      if (path === "/api/v1/ingestions/11/run") {
+        return { ok: true, status: 200, json: async () => ({ job: job(11, "succeeded", 1) }) } as Response;
+      }
+      return { ok: true, status: 200, json: async () => [] } as Response;
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const wrapper = mount(Page, { global: { stubs: { RouterLink: RouterLinkStub } } });
+    await flushPromises();
+
+    expect(wrapper.find("[aria-label='继续识别任务 11']").exists()).toBe(true);
+    await wrapper.get("[aria-label='继续识别任务 11']").trigger("click");
+    await flushPromises();
+
+    expect(requests.indexOf("/api/v1/ingestions/11")).toBeLessThan(
+      requests.indexOf("/api/v1/ingestions/11/run"),
+    );
+    expect(wrapper.text()).toContain("任务 11 · succeeded");
+  });
+
+  it("ignores a late historical job response after another job is selected", async () => {
+    loadComponent(uploadGlob, "missing SourceUpload.vue");
+    const Page = loadComponent(inboxGlob, "missing InboxPage.vue");
+    const records = [source(1, [job(11, "succeeded", 1), job(12, "succeeded", 1)])];
+    const candidateAResponse = deferred<Response>();
+    const blocksAResponse = deferred<Response>();
+    const candidateBResponse = deferred<Response>();
+    const blocksBResponse = deferred<Response>();
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const path = String(input);
+      if (path === "/api/v1/sources") {
+        return { ok: true, status: 200, json: async () => records } as Response;
+      }
+      if (path === "/api/v1/topics" || path === "/api/v1/tags") {
+        return { ok: true, status: 200, json: async () => [] } as Response;
+      }
+      if (path === "/api/v1/ingestions/11/candidates") return candidateAResponse.promise;
+      if (path === "/api/v1/ingestions/11/ocr-blocks") return blocksAResponse.promise;
+      if (path === "/api/v1/ingestions/12/candidates") return candidateBResponse.promise;
+      if (path === "/api/v1/ingestions/12/ocr-blocks") return blocksBResponse.promise;
+      return { ok: true, status: 200, json: async () => ({ job: job(11, "succeeded", 1) }) } as Response;
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const wrapper = mount(Page, { global: { stubs: { RouterLink: RouterLinkStub } } });
+    await flushPromises();
+
+    await wrapper.get("[aria-label='打开导入任务 11']").trigger("click");
+    await wrapper.get("[aria-label='打开导入任务 12']").trigger("click");
+    candidateBResponse.resolve({ ok: true, status: 200, json: async () => [candidateB] } as Response);
+    blocksBResponse.resolve({ ok: true, status: 200, json: async () => candidateB.sources[0].ocr_blocks } as Response);
+    await flushPromises();
+    candidateAResponse.resolve({ ok: true, status: 200, json: async () => [candidateA] } as Response);
+    blocksAResponse.resolve({ ok: true, status: 200, json: async () => candidateA.sources[0].ocr_blocks } as Response);
+    await flushPromises();
+
+    expect(wrapper.get("[aria-label='导入任务详情']").text()).toContain("任务 12");
+    expect(wrapper.get("[aria-label='候选题历史']").text()).toContain(candidateB.text);
+    expect(wrapper.get("[aria-label='候选题历史']").text()).not.toContain(candidateA.text);
   });
 
   it("shows all candidates when opening a historical OCR job", async () => {

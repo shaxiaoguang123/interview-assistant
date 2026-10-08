@@ -96,6 +96,7 @@ const historyError = ref("");
 const candidateBusy = ref(false);
 const selectedMergeIds = ref<number[]>([]);
 const mergeFinalText = ref("");
+let jobLoadRevision = 0;
 
 const jobs = computed(() =>
   sources.value.flatMap((source) =>
@@ -193,6 +194,22 @@ async function processQueuedJobs(jobIds: number[]) {
   }
 }
 
+async function resumeJob(jobId: number) {
+  if (busy.value) return;
+  busy.value = true;
+  historyError.value = "";
+  try {
+    const response = await request<{ job: IngestionJob }>("/api/v1/ingestions/" + jobId);
+    setJob(response.job);
+    if (response.job.status === "queued") await runJob(jobId);
+    else if (response.job.status === "running") await waitForJob(jobId);
+  } catch (error) {
+    historyError.value = "无法继续导入任务：" + errorMessage(error);
+  } finally {
+    busy.value = false;
+  }
+}
+
 async function uploadFiles(files: File[]) {
   busy.value = true;
   uploadResults.value = [];
@@ -226,6 +243,7 @@ async function uploadFiles(files: File[]) {
 }
 
 async function openJob(jobId: number) {
+  const requestRevision = ++jobLoadRevision;
   selectedJobId.value = jobId;
   selectedCandidateId.value = null;
   selectedSourceId.value = null;
@@ -237,11 +255,12 @@ async function openJob(jobId: number) {
       request<Candidate[]>("/api/v1/ingestions/" + jobId + "/candidates"),
       request<OCRBlock[]>("/api/v1/ingestions/" + jobId + "/ocr-blocks"),
     ]);
+    if (requestRevision !== jobLoadRevision) return;
     candidates.value = candidateRows;
     ocrBlocks.value = blocks;
     if (candidateRows.length) selectCandidate(candidateRows[0]);
   } catch (error) {
-    historyError.value = errorMessage(error);
+    if (requestRevision === jobLoadRevision) historyError.value = errorMessage(error);
   }
 }
 
@@ -436,6 +455,15 @@ onMounted(loadSources);
               @click="openJob(job.id)"
             >
               任务 {{ job.id }} · {{ job.status }} · {{ job.stage }} · 候选 {{ job.candidate_count }}
+            </button>
+            <button
+              v-if="job.status === 'queued' || job.status === 'running'"
+              type="button"
+              :disabled="busy"
+              :aria-label="job.status === 'queued' ? '继续识别任务 ' + job.id : '查看任务状态 ' + job.id"
+              @click="resumeJob(job.id)"
+            >
+              {{ job.status === "queued" ? "继续识别" : "查看状态" }}
             </button>
             <span v-if="job.error_code">{{ job.error_code }} · {{ job.error_message }}</span>
             <button
