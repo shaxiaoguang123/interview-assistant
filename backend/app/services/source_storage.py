@@ -374,9 +374,14 @@ def recover_source_tombstones(session_factory, storage_root: str | Path) -> int:
             ) from error
 
         with session_factory() as session:
-            source_exists = session.get(SourceAsset, source_asset_id) is not None
+            source = session.get(SourceAsset, source_asset_id)
+            source_matches_journal = (
+                source is not None
+                and source.original_path == manifest["original_path"]
+                and source.display_preview_path == manifest["display_preview_path"]
+            )
         try:
-            if source_exists:
+            if source_matches_journal:
                 _restore_tombstone_files(directory, storage_root, manifest)
             else:
                 for path in (directory / "original.bin", directory / "display.png"):

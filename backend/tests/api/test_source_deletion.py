@@ -255,3 +255,35 @@ def test_restart_cleans_tombstone_after_committed_delete(app):
     assert not original.exists()
     assert not display.exists()
     assert not directory.exists()
+
+
+def test_restart_does_not_restore_deleted_source_after_id_reuse(client, app, monkeypatch):
+    source_storage = _storage_deletion_api()
+    old_source, _job = _upload_source(client, "deleted.png")
+    with app.app_context():
+        session = app.extensions["sqlalchemy_session_factory"]()
+        old_row = session.get(SourceAsset, old_source["id"])
+        old_original_path = Path(app.config["SOURCE_STORAGE_DIR"]) / old_row.original_path
+        session.close()
+
+    remove_tombstone_directory = source_storage._remove_tombstone_directory
+
+    def leave_tombstone(_directory):
+        raise OSError("simulated cleanup interruption")
+
+    monkeypatch.setattr(source_storage, "_remove_tombstone_directory", leave_tombstone)
+    deleted = client.delete(f"/api/v1/sources/{old_source['id']}")
+    assert deleted.status_code == 200
+
+    replacement, _job = _upload_source(client, "replacement.png")
+    assert replacement["id"] == old_source["id"]
+    monkeypatch.setattr(source_storage, "_remove_tombstone_directory", remove_tombstone_directory)
+
+    recovered = source_storage.recover_source_tombstones(
+        app.extensions["sqlalchemy_session_factory"],
+        app.config["SOURCE_STORAGE_DIR"],
+    )
+
+    assert recovered == 1
+    assert not old_original_path.exists()
+    assert client.get(f"/api/v1/sources/{replacement['id']}/original").status_code == 200
