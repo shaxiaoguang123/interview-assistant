@@ -8,6 +8,7 @@ from .api.v1.health import blueprint as health_blueprint
 from .api.v1.practice_sessions import blueprint as practice_sessions_blueprint
 from .api.v1.practice_reviews import blueprint as practice_reviews_blueprint
 from .api.v1.questions import blueprint as questions_blueprint
+from .api.v1.sources import blueprint as sources_blueprint
 from .api.v1.tags import blueprint as tags_blueprint
 from .api.v1.topics import blueprint as topics_blueprint
 from .config import Config
@@ -43,6 +44,7 @@ def create_app(test_config: dict | None = None) -> Flask:
     init_db(app)
     register_local_security(app)
     app.register_blueprint(health_blueprint)
+    app.register_blueprint(sources_blueprint)
     app.register_blueprint(questions_blueprint)
     app.register_blueprint(practice_sessions_blueprint)
     app.register_blueprint(practice_reviews_blueprint)

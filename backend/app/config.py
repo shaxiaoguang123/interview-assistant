@@ -38,4 +38,7 @@ class Config:
     ALLOWED_ORIGINS = allowed_origins_from_environment()
     FRONTEND_DIST_DIR = Path(__file__).resolve().parents[2] / "frontend" / "dist"
     SEED_TOPICS_ON_STARTUP = True
-    MAX_CONTENT_LENGTH = 2 * 1024 * 1024
+    MAX_UPLOAD_FILES = 10
+    SOURCE_MAX_FILE_BYTES = 20 * 1024 * 1024
+    SOURCE_MAX_DECODED_PIXELS = 40_000_000
+    MAX_CONTENT_LENGTH = 50 * 1024 * 1024
