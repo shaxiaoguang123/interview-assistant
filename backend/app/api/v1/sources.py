@@ -217,6 +217,15 @@ def patch_source(source_id: int):
             "Invalid source update",
             {"body": f"Unsupported fields: {', '.join(sorted(unknown))}"},
         )
+    text_fields = {"platform", "source_url", "external_id", "title", "author"}
+    for field in sorted(text_fields & payload.keys()):
+        if payload[field] is not None and not isinstance(payload[field], str):
+            raise ApiError(
+                400,
+                "VALIDATION_ERROR",
+                "Invalid source update",
+                {field: "Must be a string or null"},
+            )
     if "metadata_json" in payload and not isinstance(payload["metadata_json"], dict):
         raise ApiError(
             400,

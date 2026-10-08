@@ -5,8 +5,10 @@ from pathlib import Path
 
 from PIL import Image
 from sqlalchemy import event
+from sqlalchemy.exc import StatementError
 from sqlalchemy.orm import Session
 
+import app.errors as api_errors
 from app.models.ingestion import IngestionJob, SourceAsset
 
 
@@ -204,3 +206,51 @@ def test_original_and_display_routes_use_source_id_only(client):
     assert client.get(f"/api/v1/sources/{source['id']}/original").status_code == 200
     assert client.get(f"/api/v1/sources/{source['id']}/display").status_code == 200
     assert client.get("/api/v1/sources/../../outside").status_code == 404
+
+
+def test_source_patch_rejects_non_string_metadata_without_logging_values(client):
+    source = _stored_result(_upload(client, [(BytesIO(_png_bytes()), "metadata.png")]))["source"]
+    private_marker = "SOURCE-METADATA-PRIVATE-MARKER"
+
+    response = client.patch(
+        f"/api/v1/sources/{source['id']}",
+        json={"title": {"private": private_marker}},
+    )
+
+    assert response.status_code == 400
+    assert response.get_json()["error"]["code"] == "VALIDATION_ERROR"
+    assert "title" in response.get_json()["error"]["fields"]
+
+
+def test_source_database_errors_do_not_log_metadata_or_sql_parameters(client, monkeypatch):
+    source = _stored_result(_upload(client, [(BytesIO(_png_bytes()), "metadata.png")]))["source"]
+    private_marker = "SOURCE-METADATA-PRIVATE-MARKER"
+    logged = []
+    monkeypatch.setattr(
+        api_errors.logger,
+        "error",
+        lambda *args, **kwargs: logged.append((args, kwargs)),
+    )
+
+    def fail_source_update(session, _flush_context, _instances):
+        if any(isinstance(item, SourceAsset) for item in session.dirty):
+            raise StatementError(
+                "simulated update failure",
+                "UPDATE source_asset SET title = ?",
+                {"title": private_marker},
+                ValueError("simulated"),
+            )
+
+    event.listen(Session, "before_flush", fail_source_update)
+    try:
+        response = client.patch(
+            f"/api/v1/sources/{source['id']}",
+            json={"title": private_marker},
+        )
+    finally:
+        event.remove(Session, "before_flush", fail_source_update)
+
+    assert response.status_code == 500
+    assert response.get_json()["error"]["code"] == "INTERNAL_ERROR"
+    assert any("StatementError" in str(args) for args, _kwargs in logged)
+    assert private_marker not in repr(logged)
