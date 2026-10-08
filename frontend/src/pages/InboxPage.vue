@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
 import { ApiError, request } from "../api/client";
+import IngestionCandidateEditor from "../components/IngestionCandidateEditor.vue";
 import SourceImageViewer from "../components/SourceImageViewer.vue";
 import SourceUpload from "../components/SourceUpload.vue";
 
@@ -47,6 +48,8 @@ interface Candidate {
   status: string;
   candidate_state: string;
   candidate_revision: number;
+  topics: Array<{ id: number; name: string; is_active: boolean }>;
+  tags: Array<{ id: number; name: string; is_active: boolean }>;
   sources: Array<{
     question_source_id: number;
     source_asset_id: number;
@@ -72,7 +75,15 @@ interface OCRBlock {
   confidence: number | null;
 }
 
+interface TaxonomyItem {
+  id: number;
+  name: string;
+  is_active: boolean;
+}
+
 const sources = ref<SourceAsset[]>([]);
+const topics = ref<TaxonomyItem[]>([]);
+const tags = ref<TaxonomyItem[]>([]);
 const uploadResults = ref<UploadResult[]>([]);
 const selectedJobId = ref<number | null>(null);
 const selectedCandidateId = ref<number | null>(null);
@@ -82,6 +93,9 @@ const ocrBlocks = ref<OCRBlock[]>([]);
 const busy = ref(false);
 const loadError = ref("");
 const historyError = ref("");
+const candidateBusy = ref(false);
+const selectedMergeIds = ref<number[]>([]);
+const mergeFinalText = ref("");
 
 const jobs = computed(() =>
   sources.value.flatMap((source) =>
@@ -118,7 +132,14 @@ function errorMessage(error: unknown): string {
 async function loadSources() {
   loadError.value = "";
   try {
-    sources.value = await request<SourceAsset[]>("/api/v1/sources");
+    const [sourceRows, topicRows, tagRows] = await Promise.all([
+      request<SourceAsset[]>("/api/v1/sources"),
+      request<TaxonomyItem[]>("/api/v1/topics"),
+      request<TaxonomyItem[]>("/api/v1/tags"),
+    ]);
+    sources.value = sourceRows;
+    topics.value = topicRows;
+    tags.value = tagRows;
   } catch (error) {
     loadError.value = errorMessage(error);
   }
@@ -223,6 +244,134 @@ async function openJob(jobId: number) {
 function selectCandidate(candidate: Candidate) {
   selectedCandidateId.value = candidate.id;
   selectedSourceId.value = candidate.sources[0]?.question_source_id ?? null;
+  selectedMergeIds.value = [];
+  mergeFinalText.value = candidate.text;
+}
+
+async function refreshCurrentJob() {
+  if (selectedJobId.value !== null) await openJob(selectedJobId.value);
+}
+
+async function patchCandidate(payload: Record<string, unknown>) {
+  if (selectedCandidateId.value === null) return;
+  candidateBusy.value = true;
+  historyError.value = "";
+  try {
+    await request<Candidate>(
+      "/api/v1/ingestion-candidates/" + selectedCandidateId.value,
+      {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      },
+    );
+    await refreshCurrentJob();
+  } catch (error) {
+    historyError.value =
+      error instanceof ApiError && error.status === 409
+        ? "候选内容已被其他操作更新，请刷新后重试。"
+        : errorMessage(error);
+    if (error instanceof ApiError && error.status === 409) await refreshCurrentJob();
+  } finally {
+    candidateBusy.value = false;
+  }
+}
+
+async function splitCandidate(payload: Record<string, unknown>) {
+  if (selectedJobId.value === null || selectedCandidateId.value === null) return;
+  candidateBusy.value = true;
+  historyError.value = "";
+  try {
+    await request(
+      "/api/v1/ingestions/" +
+        selectedJobId.value +
+        "/candidates/" +
+        selectedCandidateId.value +
+        "/split",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      },
+    );
+    await refreshCurrentJob();
+  } catch (error) {
+    historyError.value =
+      error instanceof ApiError && error.status === 409
+        ? "候选内容已变化，请刷新后重试。"
+        : errorMessage(error);
+    if (error instanceof ApiError && error.status === 409) await refreshCurrentJob();
+  } finally {
+    candidateBusy.value = false;
+  }
+}
+
+async function candidateDisposition(
+  action: "archive" | "confirm",
+  payload: { expected_revision: number },
+) {
+  if (selectedCandidateId.value === null) return;
+  candidateBusy.value = true;
+  historyError.value = "";
+  try {
+    await request(
+      "/api/v1/ingestion-candidates/" + selectedCandidateId.value + "/" + action,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      },
+    );
+    await refreshCurrentJob();
+  } catch (error) {
+    historyError.value =
+      error instanceof ApiError && error.status === 409
+        ? "候选内容已变化，请刷新后重试。"
+        : errorMessage(error);
+    if (error instanceof ApiError && error.status === 409) await refreshCurrentJob();
+  } finally {
+    candidateBusy.value = false;
+  }
+}
+
+async function mergeCandidates() {
+  if (selectedJobId.value === null || selectedCandidate.value === null) return;
+  const participantIds = [...new Set([...selectedMergeIds.value, selectedCandidate.value.id])];
+  if (participantIds.length < 2) {
+    historyError.value = "请选择至少另一道同一任务中的待确认候选题。";
+    return;
+  }
+  candidateBusy.value = true;
+  historyError.value = "";
+  try {
+    const selectedCandidates = candidates.value.filter((candidate) =>
+      participantIds.includes(candidate.id),
+    );
+    await request(
+      "/api/v1/ingestions/" + selectedJobId.value + "/candidates/merge",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          survivor_id: selectedCandidate.value.id,
+          candidates: selectedCandidates.map((candidate) => ({
+            id: candidate.id,
+            expected_revision: candidate.candidate_revision,
+          })),
+          final_text: mergeFinalText.value,
+        }),
+      },
+    );
+    await refreshCurrentJob();
+  } catch (error) {
+    historyError.value =
+      error instanceof ApiError && error.status === 409
+        ? "候选内容已变化，请刷新后重试。"
+        : errorMessage(error);
+    if (error instanceof ApiError && error.status === 409) await refreshCurrentJob();
+  } finally {
+    candidateBusy.value = false;
+  }
 }
 
 async function retrySource(sourceId: number) {
@@ -309,6 +458,13 @@ onMounted(loadSources);
       <p v-else>没有识别到文字</p>
       <ul aria-label="候选题历史">
         <li v-for="candidate in candidates" :key="candidate.id">
+          <input
+            v-if="candidate.candidate_state === 'pending_review' && !candidate.archived_at"
+            v-model="selectedMergeIds"
+            type="checkbox"
+            :value="candidate.id"
+            :aria-label="'选择合并候选 ' + candidate.id"
+          />
           <button
             type="button"
             :aria-label="'查看候选题 ' + candidate.id"
@@ -320,6 +476,38 @@ onMounted(loadSources);
           <span> 来源区域 {{ candidate.sources.map((item) => item.question_source_id).join(", ") }} </span>
         </li>
       </ul>
+      <p v-if="selectedCandidate && selectedCandidate.candidate_state !== 'pending_review'">
+        此候选已完成审核，只能查看历史来源证据。
+      </p>
+      <form
+        v-if="selectedCandidate && selectedCandidate.candidate_state === 'pending_review' && !selectedCandidate.archived_at"
+        aria-label="候选题同任务合并"
+        @submit.prevent="mergeCandidates"
+      >
+        <label>
+          合并后正文
+          <textarea v-model="mergeFinalText" aria-label="合并后题目正文" />
+        </label>
+        <button type="submit" :disabled="candidateBusy">合并所选候选题</button>
+      </form>
+      <IngestionCandidateEditor
+        v-if="
+          selectedCandidate &&
+          selectedCandidate.candidate_state === 'pending_review' &&
+          !selectedCandidate.archived_at &&
+          selectedCandidate.status === 'pending_review'
+        "
+        :candidate="selectedCandidate"
+        :topics="topics"
+        :tags="tags"
+        :selected-source-id="selectedSourceId"
+        :busy="candidateBusy"
+        @select-source="selectedSourceId = $event"
+        @save="patchCandidate"
+        @split="splitCandidate"
+        @archive="candidateDisposition('archive', $event)"
+        @confirm="candidateDisposition('confirm', $event)"
+      />
       <SourceImageViewer
         v-if="selectedCandidate"
         :sources="selectedCandidateSources"

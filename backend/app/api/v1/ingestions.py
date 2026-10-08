@@ -12,6 +12,13 @@ from app.repositories.ingestion import (
     list_ingestion_candidates,
     list_ocr_blocks,
 )
+from app.services.ingestion_candidates import (
+    confirm_ingestion_candidate,
+    merge_ingestion_candidates,
+    patch_ingestion_candidate,
+    reject_ingestion_candidate,
+    split_ingestion_candidate,
+)
 from app.services.ingestion import (
     create_retry_job,
     ingestion_job_json,
@@ -73,6 +80,22 @@ def _candidate_json(candidate, child_ids: list[int], source_asset_id: int) -> di
         "candidate_revision": candidate.candidate_revision,
         "origin_ingestion_job_id": candidate.origin_ingestion_job_id,
         "source_asset_id": source_asset_id,
+        "topics": [
+            {
+                "id": link.topic.id,
+                "name": link.topic.name,
+                "is_active": link.topic.is_active,
+            }
+            for link in candidate.topic_links
+        ],
+        "tags": [
+            {
+                "id": link.tag.id,
+                "name": link.tag.name,
+                "is_active": link.tag.is_active,
+            }
+            for link in candidate.tag_links
+        ],
         "split_from_candidate_id": candidate.split_from_candidate_id,
         "split_child_ids": child_ids,
         "superseded_by_candidate_id": candidate.superseded_by_candidate_id,
@@ -142,3 +165,103 @@ def post_retry_ingestion(source_id: int):
         job = create_retry_job(session, source_id)
         session.flush()
     return jsonify({"job": ingestion_job_json(job)}), 201
+
+
+def _lineage_response(session: Session, job_id: int, candidate_ids: list[int]) -> dict:
+    job = get_ingestion_job(session, job_id)
+    if job is None:
+        raise ApiError(404, "NOT_FOUND", "Ingestion job not found")
+    candidates = list_ingestion_candidates(session, job_id, status_filter="all")
+    child_ids = list_candidate_ids_by_parent(session, job_id, candidate_ids)
+    by_id = {candidate.id: candidate for candidate in candidates}
+    return {
+        "candidates": [
+            _candidate_json(
+                by_id[candidate_id],
+                child_ids.get(candidate_id, []),
+                job.source_asset_id,
+            )
+            for candidate_id in candidate_ids
+            if candidate_id in by_id
+        ]
+    }
+
+
+@blueprint.patch("/ingestion-candidates/<int:candidate_id>")
+def patch_candidate(candidate_id: int):
+    candidate = patch_ingestion_candidate(
+        get_session(),
+        candidate_id,
+        request.get_json(silent=True),
+    )
+    return jsonify(
+        _lineage_response(
+            get_session(),
+            candidate.origin_ingestion_job_id,
+            [candidate_id],
+        )["candidates"][0]
+    )
+
+
+@blueprint.post("/ingestions/<int:job_id>/candidates/<int:candidate_id>/split")
+def split_candidate(job_id: int, candidate_id: int):
+    child_ids = split_ingestion_candidate(
+        get_session(),
+        job_id,
+        candidate_id,
+        request.get_json(silent=True),
+    )
+    return jsonify(
+        {
+            "parent": _lineage_response(get_session(), job_id, [candidate_id])["candidates"][0],
+            "children": _lineage_response(get_session(), job_id, child_ids)["candidates"],
+        }
+    )
+
+
+@blueprint.post("/ingestions/<int:job_id>/candidates/merge")
+def merge_candidates(job_id: int):
+    survivor_id, loser_ids = merge_ingestion_candidates(
+        get_session(),
+        job_id,
+        request.get_json(silent=True),
+    )
+    session = get_session()
+    return jsonify(
+        {
+            "survivor": _lineage_response(session, job_id, [survivor_id])["candidates"][0],
+            "superseded": _lineage_response(session, job_id, loser_ids)["candidates"],
+        }
+    )
+
+
+@blueprint.post("/ingestion-candidates/<int:candidate_id>/archive")
+def archive_candidate(candidate_id: int):
+    candidate = reject_ingestion_candidate(
+        get_session(),
+        candidate_id,
+        request.get_json(silent=True),
+    )
+    return jsonify(
+        _lineage_response(
+            get_session(),
+            candidate.origin_ingestion_job_id,
+            [candidate_id],
+        )["candidates"][0]
+    )
+
+
+@blueprint.post("/ingestion-candidates/<int:candidate_id>/confirm")
+def confirm_candidate(candidate_id: int):
+    candidate = confirm_ingestion_candidate(
+        get_session(),
+        candidate_id,
+        request.get_json(silent=True),
+    )
+    return jsonify(
+        _lineage_response(
+            get_session(),
+            candidate.origin_ingestion_job_id,
+            [candidate_id],
+        )["candidates"][0]
+    )

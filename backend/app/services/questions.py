@@ -101,6 +101,18 @@ def create_question(session: Session, payload: dict) -> Question:
         raise ApiError(409, "CONFLICT", "Question could not be saved") from error
 
 
+def _reject_generic_ocr_candidate_operation(question: Question) -> None:
+    if question.status == "pending_review" or (
+        question.origin_ingestion_job_id is not None
+        and question.ingestion_candidate_state != "confirmed"
+    ):
+        raise ApiError(
+            409,
+            "CONFLICT",
+            "Unconfirmed OCR candidates must be changed through the candidate review API",
+        )
+
+
 def update_question(session: Session, question_id: int, payload: dict) -> Question:
     if not isinstance(payload, dict) or not payload:
         raise ApiError(400, "VALIDATION_ERROR", "Invalid question update", {"body": "Expected a non-empty JSON object"})
@@ -114,6 +126,7 @@ def update_question(session: Session, question_id: int, payload: dict) -> Questi
             question = question_repository.get_question(session, question_id)
             if question is None:
                 raise ApiError(404, "NOT_FOUND", "Question not found")
+            _reject_generic_ocr_candidate_operation(question)
             if "text" in payload:
                 text, normalized, digest = prepare_question_text(payload["text"])
                 question.text = text
@@ -176,6 +189,7 @@ def archive_question(session: Session, question_id: int) -> Question:
             question = question_repository.get_question(session, question_id)
             if question is None:
                 raise ApiError(404, "NOT_FOUND", "Question not found")
+            _reject_generic_ocr_candidate_operation(question)
             if question.archived_at is None:
                 question.archived_at = datetime.now(timezone.utc)
             session.flush()
@@ -199,6 +213,7 @@ def update_question_state(session: Session, question_id: int, payload: dict) -> 
         question = question_repository.get_question(session, question_id)
         if question is None:
             raise ApiError(404, "NOT_FOUND", "Question not found")
+        _reject_generic_ocr_candidate_operation(question)
         if question.state is None:
             question.state = QuestionState(is_favorite=False, is_wrong=False)
         for field, value in payload.items():

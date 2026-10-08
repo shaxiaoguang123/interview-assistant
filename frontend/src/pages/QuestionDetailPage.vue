@@ -33,6 +33,20 @@ interface PracticeReviewItem {
   updated_at: string;
 }
 
+interface QuestionSourceItem {
+  question_source_id: number;
+  source_asset_id: number;
+  source_title: string | null;
+  original_filename: string | null;
+  source_text_snapshot: string;
+  raw_ocr_text_snapshot: string;
+  locator_json: { x: number; y: number; width: number; height: number };
+  locator_correction_json: { x: number; y: number; width: number; height: number } | null;
+  ocr_block_ids: string[];
+  original_image_url: string;
+  display_image_url: string;
+}
+
 interface QuestionFormPayload {
   text: string;
   answer_type: string | null;
@@ -44,6 +58,7 @@ interface QuestionFormPayload {
 const route = useRoute();
 const question = ref<QuestionDetail | null>(null);
 const reviews = ref<PracticeReviewItem[]>([]);
+const sources = ref<QuestionSourceItem[]>([]);
 const reviewRatingDrafts = ref<Record<number, PracticeReviewItem["review_rating"]>>({});
 const topics = ref<TaxonomyItem[]>([]);
 const tags = ref<TaxonomyItem[]>([]);
@@ -93,6 +108,7 @@ async function loadQuestion(): Promise<void> {
     topics.value = mergeHistoricalItems(topicResult, questionResult.topics);
     tags.value = mergeHistoricalItems(tagResult, questionResult.tags);
     reviews.value = reviewRows;
+    void loadQuestionSources();
     reviewRatingDrafts.value = Object.fromEntries(
       reviewRows.map((review) => [review.id, review.review_rating]),
     );
@@ -100,6 +116,16 @@ async function loadQuestion(): Promise<void> {
     errorMessage.value = displayError(error);
   } finally {
     loading.value = false;
+  }
+}
+
+async function loadQuestionSources(): Promise<void> {
+  try {
+    sources.value = await request<QuestionSourceItem[]>(
+      "/api/v1/questions/" + questionId.value + "/sources",
+    );
+  } catch {
+    sources.value = [];
   }
 }
 
@@ -214,6 +240,27 @@ onMounted(loadQuestion);
         :tags="tags"
         @save="update"
       />
+      <section v-if="sources.length" aria-label="题目来源证据">
+        <h3>截图来源与 OCR 证据</h3>
+        <article v-for="source in sources" :key="source.question_source_id">
+          <h4>
+            来源区域 {{ source.question_source_id }} ·
+            {{ source.source_title || source.original_filename || ("截图 " + source.source_asset_id) }}
+          </h4>
+          <p>题目来源片段：{{ source.source_text_snapshot }}</p>
+          <details>
+            <summary>查看原始 OCR 文本</summary>
+            <pre>{{ source.raw_ocr_text_snapshot }}</pre>
+          </details>
+          <p>OCR block：{{ source.ocr_block_ids.join(", ") }}</p>
+          <img
+            :src="source.display_image_url"
+            alt="题目来源截图区域预览"
+            style="max-width: 24rem; max-height: 32rem; object-fit: contain"
+          />
+          <a :href="source.original_image_url">打开原始截图</a>
+        </article>
+      </section>
       <section aria-labelledby="practice-history-title">
         <h3 id="practice-history-title">练习掌握度历史</h3>
         <p v-if="reviews.length === 0">暂无练习记录</p>
