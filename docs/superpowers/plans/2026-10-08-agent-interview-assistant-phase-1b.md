@@ -122,6 +122,7 @@ frontend/tests/inbox.spec.ts
 - Create: backend/tests/test_phase1b_models.py
 - Modify: backend/app/models/__init__.py
 - Modify: backend/app/models/question.py
+- Modify: backend/app/config.py
 - Modify: backend/tests/test_migrations.py
 - Modify: backend/tests/conftest.py
 
@@ -129,6 +130,7 @@ frontend/tests/inbox.spec.ts
 - **Consumes:** Phase 1A SQLAlchemy Base, Question fields/status check, Alembic revision 0002, SQLite FK configuration, and isolated tmp_path fixtures.
 - **Produces:** SourceAsset, IngestionJob, OCRBlock, QuestionSource, QuestionSourceOCRBlock; Question.origin_ingestion_job_id, Question.ingestion_candidate_state, candidate_revision, split_from_candidate_id, and superseded_by_candidate_id; Alembic revision 0003.
 - Add nullable self-FKs split_from_candidate_id and superseded_by_candidate_id on Question with RESTRICT; add indexes, nonnegative candidate_revision check, and checks that lineage cannot self-reference and requires an origin_ingestion_job_id. Do not add a lineage/history table. Phase 1A manual Questions migrate with both lineage fields and OCR provenance null.
+- Define SOURCE_STORAGE_DIR as APP_DATA_DIR/sources by default in config.py; Task 2 consumes this single setting and tests may override it under tmp_path.
 - Candidate services verify that split parent and superseded target have the same origin_ingestion_job_id. A Split child may also later become superseded by a same-job Merge survivor, so split_from_candidate_id and superseded_by_candidate_id may both be populated on a child.
 - Candidate state is nullable for manual questions and constrained to pending_review/confirmed/rejected/superseded for OCR candidates. Question.status remains pending_review/active/merged; inbox Split/Merge never uses status=merged. candidate_revision defaults to 0, cannot be negative, and increments on each candidate mutation. SHA-256 and normalized_hash are ordinary non-unique indexes.
 - Preserve existing 1A FTS virtual table/triggers, Questions, taxonomy, PracticeSessions, SessionItems, PracticeReviews, and normalized_hash index. New QuestionSource rows have their own IDs and restrictive source/block FKs so Split/Merge can add evidence without repointing old rows.
@@ -137,7 +139,7 @@ frontend/tests/inbox.spec.ts
 
 - [ ] **Step 1: Write failing tests** `test_phase1b_migration_upgrades_existing_1a_database_without_data_loss`, `test_question_lineage_columns_have_nullable_restrictive_fks`, `test_manual_question_keeps_null_ingestion_provenance_and_lineage`, `test_candidate_revision_defaults_to_zero_and_cannot_be_negative`, `test_candidate_lineage_rejects_self_reference`, `test_ocr_block_uses_stable_uuid_primary_key`, `test_source_sha256_and_question_normalized_hash_are_not_unique`, and `test_source_storage_root_is_under_configured_app_data_dir`.
 - [ ] **Step 2: Run RED.** `(cd backend && conda run -n test pytest tests/test_migrations.py tests/test_phase1b_models.py -q)`; expect missing schema/constraint assertions to fail.
-- [ ] **Step 3: Implement SQLAlchemy models and Alembic revision 0003.** Keep same-job checks in candidate services; preserve 1A status/defaults and existing data. Add indexes for origin job, split parent, superseded target, job/source, and OCR reading order.
+- [ ] **Step 3: Implement SQLAlchemy models, the SOURCE_STORAGE_DIR default, and Alembic revision 0003.** Keep same-job checks in candidate services; preserve 1A status/defaults and existing data. Add indexes for origin job, split parent, superseded target, job/source, and OCR reading order.
 - [ ] **Step 4: Run GREEN.** Run the focused migration/model tests and backend suite against temporary databases; verify existing 1A Question, QuestionState, SessionItem, and PracticeReview rows survive.
 - [ ] **Step 5: Commit** as `feat: add Phase 1B source and OCR provenance schema`.
 

@@ -36,6 +36,7 @@ def app(tmp_path):
         "TESTING": False,
         "PROPAGATE_EXCEPTIONS": False,
         "APP_DATA_DIR": data_dir,
+        "SOURCE_STORAGE_DIR": data_dir / "sources",
         "DATABASE_URL": f"sqlite:///{database_path}",
         "SEED_TOPICS_ON_STARTUP": False,
         "ALLOWED_ORIGINS": ["http://localhost:5173", "http://127.0.0.1:5173"],

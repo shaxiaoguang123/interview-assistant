@@ -24,6 +24,16 @@ def _upgrade_empty_database(database_path: Path) -> str:
     return database_url
 
 
+def _migration_config(database_path: Path) -> tuple[Config, str]:
+    alembic_ini = BACKEND_ROOT / "alembic.ini"
+    database_url = URL.create("sqlite", database=str(database_path)).render_as_string(
+        hide_password=False
+    )
+    config = Config(str(alembic_ini))
+    config.set_main_option("sqlalchemy.url", database_url)
+    return config, database_url
+
+
 def test_alembic_upgrades_empty_database_to_head(tmp_path):
     database_path = tmp_path / "empty.sqlite3"
     assert not database_path.exists()
@@ -143,5 +153,94 @@ def test_sqlite_rejects_foreign_key_violation(tmp_path):
                 connection.execute(
                     text("INSERT INTO question_topic (question_id, topic_id) VALUES (-1, -1)")
                 )
+    finally:
+        engine.dispose()
+
+
+def test_phase1b_migration_upgrades_existing_1a_database_without_data_loss(tmp_path):
+    database_path = tmp_path / "existing-phase1a.sqlite3"
+    config, database_url = _migration_config(database_path)
+    command.upgrade(config, "0002_question_search")
+
+    engine = create_engine(database_url)
+    try:
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    "INSERT INTO topic (id, track_key, slug, name) "
+                    "VALUES (1, 'agent_development', 'legacy-topic', 'Legacy Topic')"
+                )
+            )
+            connection.execute(text("INSERT INTO tag (id, name) VALUES (1, 'Legacy Tag')"))
+            connection.execute(
+                text(
+                    "INSERT INTO question "
+                    "(id, text, normalized_text, search_text, normalized_hash, status) "
+                    "VALUES (1, 'Legacy Agent question', 'legacy agent question', "
+                    "'legacy agent question', 'legacy-hash', 'active')"
+                )
+            )
+            connection.execute(
+                text("INSERT INTO question_topic (question_id, topic_id) VALUES (1, 1)")
+            )
+            connection.execute(
+                text("INSERT INTO question_tag (question_id, tag_id) VALUES (1, 1)")
+            )
+            connection.execute(
+                text(
+                    "INSERT INTO question_state (question_id, is_favorite, is_wrong) "
+                    "VALUES (1, 1, 0)"
+                )
+            )
+            connection.execute(
+                text(
+                    "INSERT INTO practice_session (id, mode, filters_json, selector_version) "
+                    "VALUES (1, 'random', '{}', 'v1')"
+                )
+            )
+            connection.execute(
+                text(
+                    "INSERT INTO session_item "
+                    "(id, session_id, question_id, ordinal, status) "
+                    "VALUES (1, 1, 1, 1, 'completed')"
+                )
+            )
+            connection.execute(
+                text(
+                    "INSERT INTO practice_review "
+                    "(id, question_id, session_item_id, review_rating) "
+                    "VALUES (1, 1, 1, 'basic')"
+                )
+            )
+
+        command.upgrade(config, "head")
+
+        with engine.connect() as connection:
+            question = connection.execute(
+                text(
+                    "SELECT text, status, origin_ingestion_job_id, "
+                    "ingestion_candidate_state, split_from_candidate_id, "
+                    "superseded_by_candidate_id FROM question WHERE id = 1"
+                )
+            ).one()
+            assert question == (
+                "Legacy Agent question",
+                "active",
+                None,
+                None,
+                None,
+                None,
+            )
+            assert connection.scalar(text("SELECT count(*) FROM question_topic")) == 1
+            assert connection.scalar(text("SELECT count(*) FROM question_tag")) == 1
+            assert connection.scalar(text("SELECT count(*) FROM question_state")) == 1
+            assert connection.scalar(text("SELECT count(*) FROM session_item")) == 1
+            assert connection.scalar(text("SELECT count(*) FROM practice_review")) == 1
+            assert connection.scalar(
+                text(
+                    "SELECT count(*) FROM question_fts "
+                    "WHERE question_fts MATCH 'Legacy'"
+                )
+            ) == 1
     finally:
         engine.dispose()

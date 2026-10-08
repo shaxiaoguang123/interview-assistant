@@ -14,6 +14,10 @@ def default_data_dir() -> Path:
     return Path(user_data_dir("AgentInterviewAssistant", "Local"))
 
 
+def default_source_storage_dir() -> Path:
+    return default_data_dir() / "sources"
+
+
 def default_database_url() -> str:
     configured = os.environ.get("DATABASE_URL")
     if configured:
@@ -29,6 +33,7 @@ def allowed_origins_from_environment() -> list[str]:
 
 class Config:
     APP_DATA_DIR = default_data_dir()
+    SOURCE_STORAGE_DIR = default_source_storage_dir()
     DATABASE_URL = default_database_url()
     ALLOWED_ORIGINS = allowed_origins_from_environment()
     FRONTEND_DIST_DIR = Path(__file__).resolve().parents[2] / "frontend" / "dist"
