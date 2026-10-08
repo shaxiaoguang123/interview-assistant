@@ -182,6 +182,7 @@ describe("screenshot inbox and OCR viewer", () => {
     expect(wrapper.text()).toContain("OCR_FAILED");
     expect(wrapper.text()).toContain("succeeded");
     expect(wrapper.text()).toContain("screenshot-1.png");
+    expect(wrapper.get("[aria-label='本次上传结果']").text()).toContain("succeeded");
   });
 
   it("queries a timed-out job without posting run a second time", async () => {

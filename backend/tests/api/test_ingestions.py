@@ -178,7 +178,7 @@ def test_supported_runner_recovers_once_with_reloader_disabled(monkeypatch):
     calls = []
 
     class FakeApp:
-        config = {"DEBUG": True}
+        config = {"DEBUG": True, "SOURCE_STORAGE_DIR": "/tmp/ocr-sources"}
         extensions = {"sqlalchemy_session_factory": object()}
 
         def run(self, **kwargs):
@@ -189,15 +189,46 @@ def test_supported_runner_recovers_once_with_reloader_disabled(monkeypatch):
     monkeypatch.setattr(
         run,
         "recover_interrupted_jobs",
-        lambda _factory: calls.append(("recover", None)),
+        lambda _factory: calls.append(("recover_jobs", None)),
+    )
+    monkeypatch.setattr(
+        run,
+        "recover_source_tombstones",
+        lambda _factory, _root: calls.append(("recover_tombstones", None)),
     )
 
     run.main()
 
-    assert calls[0] == ("recover", None)
-    assert calls[1][0] == "run"
-    assert calls[1][1]["use_reloader"] is False
-    assert calls[1][1]["debug"] is True
+    assert calls[0] == ("recover_jobs", None)
+    assert calls[1] == ("recover_tombstones", None)
+    assert calls[2][0] == "run"
+    assert calls[2][1]["use_reloader"] is False
+    assert calls[2][1]["debug"] is True
+
+
+def test_runner_allows_local_port_override(monkeypatch):
+    run_path = BACKEND_ROOT / "run.py"
+    tree = ast.parse(run_path.read_text(encoding="utf-8"))
+    assert any(isinstance(node, ast.FunctionDef) and node.name == "main" for node in tree.body)
+    run = import_module("run")
+    calls = []
+
+    class FakeApp:
+        config = {"DEBUG": False, "SOURCE_STORAGE_DIR": "/tmp/ocr-sources"}
+        extensions = {"sqlalchemy_session_factory": object()}
+
+        def run(self, **kwargs):
+            calls.append(kwargs)
+
+    monkeypatch.setenv("APP_PORT", "5017")
+    monkeypatch.setattr(run, "create_app", FakeApp)
+    monkeypatch.setattr(run, "recover_interrupted_jobs", lambda _factory: None)
+    monkeypatch.setattr(run, "recover_source_tombstones", lambda _factory, _root: None)
+
+    run.main()
+
+    assert calls[0]["port"] == 5017
+    assert calls[0]["use_reloader"] is False
 
 
 def test_candidate_query_includes_pending_confirmed_rejected_and_superseded(client, app):

@@ -1,14 +1,18 @@
+import os
+
 from app import create_app
 from app.services.ingestion import recover_interrupted_jobs
+from app.services.source_storage import recover_source_tombstones
 
 
 def main() -> None:
     app = create_app()
     session_factory = app.extensions["sqlalchemy_session_factory"]
     recover_interrupted_jobs(session_factory)
+    recover_source_tombstones(session_factory, app.config["SOURCE_STORAGE_DIR"])
     app.run(
         host="127.0.0.1",
-        port=5000,
+        port=int(os.environ.get("APP_PORT", "5000")),
         debug=bool(app.config.get("DEBUG", False)),
         use_reloader=False,
     )

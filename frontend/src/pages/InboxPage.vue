@@ -116,11 +116,15 @@ const selectedCandidateSources = computed(() => selectedCandidate.value?.sources
 
 function setJob(job: IngestionJob) {
   const asset = sources.value.find((source) => source.id === job.source_asset_id);
-  if (!asset) return;
-  const index = asset.ingestion_jobs.findIndex((item) => item.id === job.id);
-  if (index < 0) asset.ingestion_jobs.unshift(job);
-  else asset.ingestion_jobs[index] = job;
-  sources.value = [...sources.value];
+  if (asset) {
+    const index = asset.ingestion_jobs.findIndex((item) => item.id === job.id);
+    if (index < 0) asset.ingestion_jobs.unshift(job);
+    else asset.ingestion_jobs[index] = job;
+    sources.value = [...sources.value];
+  }
+  uploadResults.value = uploadResults.value.map((result) =>
+    result.job?.id === job.id ? { ...result, job } : result,
+  );
 }
 
 function errorMessage(error: unknown): string {

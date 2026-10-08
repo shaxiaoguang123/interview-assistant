@@ -385,7 +385,6 @@ def split_ingestion_candidate(
         block_map, cited_ids = _block_map_for_candidate(session, candidate, job)
         parts = _parse_split_parts(payload.get("parts"), block_map, cited_ids)
 
-        parent_revision = expected_revision + 1
         _advance_candidate(
             session,
             candidate,

@@ -17,6 +17,7 @@ from app.repositories.sources import (
 )
 from app.services.source_storage import (
     cleanup_source_files,
+    delete_unreferenced_source,
     resolve_storage_path,
     save_source_file,
 )
@@ -266,6 +267,17 @@ def archive_source(source_id: int):
         session.flush()
     source = get_source_asset(session, source_id)
     return jsonify(_source_json(source, include_jobs=True))
+
+
+@blueprint.delete("/sources/<int:source_id>")
+def delete_source(source_id: int):
+    session_factory = current_app.extensions["sqlalchemy_session_factory"]
+    delete_unreferenced_source(
+        session_factory,
+        source_id,
+        current_app.config["SOURCE_STORAGE_DIR"],
+    )
+    return jsonify({"id": source_id, "deleted": True})
 
 
 def _image_file(relative_path: str, mime_type: str, download_name: str | None):
