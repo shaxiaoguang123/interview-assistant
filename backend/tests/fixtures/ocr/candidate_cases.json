@@ -1,0 +1,137 @@
+[
+  {
+    "name": "numbered_multiblock",
+    "detections": [
+      {"id": "00000000-0000-4000-8000-000000000001", "text": "Agent 面试题", "bbox": [0.1, 0.02, 0.8, 0.03], "confidence": 0.99, "reading_order": 0},
+      {"id": "00000000-0000-4000-8000-000000000002", "text": "1. 什么是 MCP？", "bbox": [0.1, 0.10, 0.8, 0.025], "confidence": 0.98, "reading_order": 1},
+      {"id": "00000000-0000-4000-8000-000000000003", "text": "MCP 与 Function Calling 有什么区别？", "bbox": [0.1, 0.13, 0.8, 0.025], "confidence": 0.97, "reading_order": 2},
+      {"id": "00000000-0000-4000-8000-000000000004", "text": "2. LangGraph 如何持久化状态？", "bbox": [0.1, 0.30, 0.8, 0.025], "confidence": 0.96, "reading_order": 3}
+    ],
+    "expected_texts": [
+      "1. 什么是 MCP？\nMCP 与 Function Calling 有什么区别？",
+      "2. LangGraph 如何持久化状态？"
+    ],
+    "expected_block_groups": [
+      ["00000000-0000-4000-8000-000000000002", "00000000-0000-4000-8000-000000000003"],
+      ["00000000-0000-4000-8000-000000000004"]
+    ]
+  },
+  {
+    "name": "one_question_across_ocr_blocks",
+    "detections": [
+      {"id": "00000000-0000-4000-8000-000000000005", "text": "如何在 Agent 中使用 RAG？", "bbox": [0.1, 0.10, 0.8, 0.02], "confidence": 0.94, "reading_order": 0},
+      {"id": "00000000-0000-4000-8000-000000000006", "text": "请说明检索、重排与上下文组装。", "bbox": [0.1, 0.13, 0.8, 0.02], "confidence": 0.93, "reading_order": 1}
+    ],
+    "expected_texts": [
+      "如何在 Agent 中使用 RAG？\n请说明检索、重排与上下文组装。"
+    ],
+    "expected_block_groups": [
+      ["00000000-0000-4000-8000-000000000005", "00000000-0000-4000-8000-000000000006"]
+    ]
+  },
+  {
+    "name": "unnumbered_spatial",
+    "detections": [
+      {"id": "00000000-0000-4000-8000-000000000007", "text": "Agent 为什么需要 Memory？", "bbox": [0.1, 0.10, 0.8, 0.02], "confidence": 0.93, "reading_order": 0},
+      {"id": "00000000-0000-4000-8000-000000000008", "text": "常见 Memory 类型有哪些？", "bbox": [0.1, 0.13, 0.8, 0.02], "confidence": 0.92, "reading_order": 1},
+      {"id": "00000000-0000-4000-8000-000000000009", "text": "如何评估 Agent 的可靠性？", "bbox": [0.1, 0.20, 0.8, 0.02], "confidence": 0.91, "reading_order": 2}
+    ],
+    "expected_texts": [
+      "Agent 为什么需要 Memory？\n常见 Memory 类型有哪些？",
+      "如何评估 Agent 的可靠性？"
+    ],
+    "expected_block_groups": [
+      ["00000000-0000-4000-8000-000000000007", "00000000-0000-4000-8000-000000000008"],
+      ["00000000-0000-4000-8000-000000000009"]
+    ]
+  },
+  {
+    "name": "title_and_numbered_questions",
+    "detections": [
+      {"id": "00000000-0000-4000-8000-000000000010", "text": "AI 工程师面试题精选", "bbox": [0.1, 0.02, 0.8, 0.03], "confidence": 0.99, "reading_order": 0},
+      {"id": "00000000-0000-4000-8000-000000000011", "text": "1) Tool Calling 的执行流程是什么？", "bbox": [0.1, 0.10, 0.8, 0.025], "confidence": 0.96, "reading_order": 1},
+      {"id": "00000000-0000-4000-8000-000000000012", "text": "2. RAG 如何减少幻觉？", "bbox": [0.1, 0.20, 0.8, 0.025], "confidence": 0.95, "reading_order": 2}
+    ],
+    "expected_texts": [
+      "1) Tool Calling 的执行流程是什么？",
+      "2. RAG 如何减少幻觉？"
+    ],
+    "expected_block_groups": [
+      ["00000000-0000-4000-8000-000000000011"],
+      ["00000000-0000-4000-8000-000000000012"]
+    ]
+  },
+  {
+    "name": "mixed_chinese_english_terms",
+    "detections": [
+      {"id": "00000000-0000-4000-8000-000000000013", "text": "1. Function Calling 和 MCP 的边界如何划分？", "bbox": [0.1, 0.10, 0.8, 0.025], "confidence": 0.95, "reading_order": 0},
+      {"id": "00000000-0000-4000-8000-000000000014", "text": "2. LangGraph 的 checkpoint 有什么作用？", "bbox": [0.1, 0.20, 0.8, 0.025], "confidence": 0.94, "reading_order": 1}
+    ],
+    "expected_texts": [
+      "1. Function Calling 和 MCP 的边界如何划分？",
+      "2. LangGraph 的 checkpoint 有什么作用？"
+    ],
+    "expected_block_groups": [
+      ["00000000-0000-4000-8000-000000000013"],
+      ["00000000-0000-4000-8000-000000000014"]
+    ]
+  },
+  {
+    "name": "multiple_questions_in_one_block",
+    "detections": [
+      {"id": "00000000-0000-4000-8000-000000000015", "text": "MCP 与 Function Calling 有什么区别？RAG 如何处理多跳查询？", "bbox": [0.1, 0.10, 0.8, 0.05], "confidence": 0.92, "reading_order": 0}
+    ],
+    "expected_texts": [
+      "MCP 与 Function Calling 有什么区别？RAG 如何处理多跳查询？"
+    ],
+    "expected_block_groups": [
+      ["00000000-0000-4000-8000-000000000015"]
+    ]
+  },
+  {
+    "name": "long_screenshot",
+    "detections": [
+      {"id": "00000000-0000-4000-8000-000000000016", "text": "1. 什么是 ReAct？", "bbox": [0.08, 0.05, 0.84, 0.02], "confidence": 0.98, "reading_order": 0},
+      {"id": "00000000-0000-4000-8000-000000000017", "text": "请说明 Thought、Action 与 Observation。", "bbox": [0.08, 0.08, 0.84, 0.02], "confidence": 0.97, "reading_order": 1},
+      {"id": "00000000-0000-4000-8000-000000000018", "text": "2. Agent 如何处理工具调用失败？", "bbox": [0.08, 0.25, 0.84, 0.02], "confidence": 0.96, "reading_order": 2},
+      {"id": "00000000-0000-4000-8000-000000000019", "text": "3. MCP transport 常见类型有哪些？", "bbox": [0.08, 0.52, 0.84, 0.02], "confidence": 0.95, "reading_order": 3},
+      {"id": "00000000-0000-4000-8000-000000000020", "text": "4. 怎样评估 RAG 检索质量？", "bbox": [0.08, 0.80, 0.84, 0.02], "confidence": 0.94, "reading_order": 4}
+    ],
+    "expected_texts": [
+      "1. 什么是 ReAct？\n请说明 Thought、Action 与 Observation。",
+      "2. Agent 如何处理工具调用失败？",
+      "3. MCP transport 常见类型有哪些？",
+      "4. 怎样评估 RAG 检索质量？"
+    ],
+    "expected_block_groups": [
+      ["00000000-0000-4000-8000-000000000016", "00000000-0000-4000-8000-000000000017"],
+      ["00000000-0000-4000-8000-000000000018"],
+      ["00000000-0000-4000-8000-000000000019"],
+      ["00000000-0000-4000-8000-000000000020"]
+    ]
+  },
+  {
+    "name": "zero_text_detected",
+    "detections": [],
+    "expected_texts": [],
+    "expected_block_groups": []
+  },
+  {
+    "name": "out_of_order_input",
+    "detections": [
+      {"id": "00000000-0000-4000-8000-000000000023", "text": "3. Memory 的更新策略是什么？", "bbox": [0.1, 0.30, 0.8, 0.025], "confidence": 0.92, "reading_order": 2},
+      {"id": "00000000-0000-4000-8000-000000000021", "text": "1. 什么是 MCP？", "bbox": [0.1, 0.10, 0.8, 0.025], "confidence": 0.94, "reading_order": 0},
+      {"id": "00000000-0000-4000-8000-000000000022", "text": "2. 如何使用 RAG？", "bbox": [0.1, 0.20, 0.8, 0.025], "confidence": 0.93, "reading_order": 1}
+    ],
+    "expected_texts": [
+      "1. 什么是 MCP？",
+      "2. 如何使用 RAG？",
+      "3. Memory 的更新策略是什么？"
+    ],
+    "expected_block_groups": [
+      ["00000000-0000-4000-8000-000000000021"],
+      ["00000000-0000-4000-8000-000000000022"],
+      ["00000000-0000-4000-8000-000000000023"]
+    ]
+  }
+]

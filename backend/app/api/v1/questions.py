@@ -1,9 +1,13 @@
 from __future__ import annotations
 
 from flask import Blueprint, jsonify, request
+from sqlalchemy import select
+from sqlalchemy.orm import selectinload
 
 from app.db import get_session
 from app.errors import ApiError
+from app.models.ingestion import QuestionSource, QuestionSourceOCRBlock
+from app.models.question import Question
 from app.services.questions import (
     archive_question,
     create_question,
@@ -133,4 +137,72 @@ def patch_question_state(question_id: int):
             "user_note": state.user_note,
             "updated_at": state.updated_at.isoformat() if state.updated_at else None,
         }
+    )
+
+
+@blueprint.get("/questions/<int:question_id>/sources")
+def get_question_sources(question_id: int):
+    session = get_session()
+    if session.get(Question, question_id) is None:
+        raise ApiError(404, "NOT_FOUND", "Question not found")
+    sources = list(
+        session.scalars(
+            select(QuestionSource)
+            .options(
+                selectinload(QuestionSource.source_asset),
+                selectinload(QuestionSource.ocr_block_links).selectinload(
+                    QuestionSourceOCRBlock.ocr_block
+                ),
+            )
+            .where(QuestionSource.question_id == question_id)
+            .order_by(QuestionSource.id)
+        )
+    )
+    return jsonify(
+        [
+            {
+                "question_source_id": source.id,
+                "question_id": source.question_id,
+                "source_asset_id": source.source_asset_id,
+                "source_type": source.source_asset.source_type,
+                "source_title": source.source_asset.title,
+                "original_filename": source.source_asset.original_filename,
+                "mime_type": source.source_asset.mime_type,
+                "locator_type": source.locator_type,
+                "locator_json": source.locator_json,
+                "locator_correction_json": source.locator_correction_json,
+                "source_text_snapshot": source.source_text_snapshot,
+                "raw_ocr_text_snapshot": source.raw_ocr_text_snapshot,
+                "confidence": source.confidence,
+                "ocr_block_ids": [
+                    link.ocr_block.id
+                    for link in sorted(
+                        source.ocr_block_links,
+                        key=lambda item: (
+                            item.ocr_block.reading_order,
+                            item.ocr_block.id,
+                        ),
+                    )
+                ],
+                "ocr_blocks": [
+                    {
+                        "id": link.ocr_block.id,
+                        "text": link.ocr_block.text,
+                        "bbox": link.ocr_block.bbox_json,
+                        "reading_order": link.ocr_block.reading_order,
+                        "confidence": link.ocr_block.confidence,
+                    }
+                    for link in sorted(
+                        source.ocr_block_links,
+                        key=lambda item: (
+                            item.ocr_block.reading_order,
+                            item.ocr_block.id,
+                        ),
+                    )
+                ],
+                "original_image_url": f"/api/v1/sources/{source.source_asset_id}/original",
+                "display_image_url": f"/api/v1/sources/{source.source_asset_id}/display",
+            }
+            for source in sources
+        ]
     )

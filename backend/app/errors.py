@@ -5,6 +5,7 @@ from typing import Any
 
 from flask import Flask, jsonify
 from werkzeug.exceptions import HTTPException
+from sqlalchemy.exc import SQLAlchemyError
 
 
 logger = logging.getLogger(__name__)
@@ -54,7 +55,12 @@ def register_error_handlers(app: Flask) -> None:
         code = code_by_status.get(status_code, "HTTP_ERROR")
         return _error_response(status_code, code, error.name)
 
+    @app.errorhandler(SQLAlchemyError)
+    def handle_database_error(error: SQLAlchemyError):
+        logger.error("Database request failed (error_type=%s)", type(error).__name__)
+        return _error_response(500, "INTERNAL_ERROR", "Internal server error")
+
     @app.errorhandler(Exception)
     def handle_unexpected_error(error: Exception):
-        logger.exception("Unhandled API error", exc_info=error)
+        logger.error("Unhandled API error (error_type=%s)", type(error).__name__)
         return _error_response(500, "INTERNAL_ERROR", "Internal server error")

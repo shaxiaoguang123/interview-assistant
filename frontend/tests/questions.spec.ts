@@ -341,4 +341,59 @@ describe("manual question bank", () => {
       "Retry this detail load",
     );
   });
+
+  it("shows the OCR source snapshot and original-image link for a question", async () => {
+    const pageModules = import.meta.glob("../src/pages/QuestionDetailPage.vue", { eager: true });
+    const pageModule = pageModules["../src/pages/QuestionDetailPage.vue"] as
+      | { default?: object }
+      | undefined;
+    expect(pageModule).toBeDefined();
+    const question = makeQuestion(1, "Question sourced from screenshot");
+    const sourceRows = [
+      {
+        question_source_id: 91,
+        question_id: 1,
+        source_asset_id: 8,
+        source_title: "Interview screenshot",
+        original_filename: "capture.png",
+        source_text_snapshot: "What is MCP?",
+        raw_ocr_text_snapshot: "1. What is MCP?\nMCP protocol details",
+        locator_json: { x: 0.1, y: 0.2, width: 0.5, height: 0.1 },
+        locator_correction_json: null,
+        ocr_block_ids: ["block-uuid-1"],
+        original_image_url: "/api/v1/sources/8/original",
+        display_image_url: "/api/v1/sources/8/display",
+      },
+    ];
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const path = String(input);
+      if (path === "/api/v1/questions/1") {
+        return { ok: true, status: 200, json: async () => question } as Response;
+      }
+      if (path === "/api/v1/topics" || path === "/api/v1/tags") {
+        return { ok: true, status: 200, json: async () => [] } as Response;
+      }
+      if (path === "/api/v1/questions/1/practice-reviews") {
+        return { ok: true, status: 200, json: async () => [] } as Response;
+      }
+      if (path === "/api/v1/questions/1/sources") {
+        return { ok: true, status: 200, json: async () => sourceRows } as Response;
+      }
+      throw new Error("Unexpected request: " + path);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const router = createAppRouter(createMemoryHistory());
+    await router.push("/questions/1");
+    await router.isReady();
+    const wrapper = mount(pageModule!.default!, { global: { plugins: [router] } });
+    await flushPromises();
+
+    expect(wrapper.get("[aria-label='题目来源证据']").text()).toContain("What is MCP?");
+    expect(wrapper.text()).toContain("1. What is MCP?");
+    expect(wrapper.get("a[href='/api/v1/sources/8/original']").exists()).toBe(true);
+    expect(wrapper.get("img[alt='题目来源截图区域预览']").attributes("src")).toBe(
+      "/api/v1/sources/8/display",
+    );
+  });
 });
