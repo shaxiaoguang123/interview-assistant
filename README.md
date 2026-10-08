@@ -1,5 +1,7 @@
 # Agent Interview Assistant
 
+面试题库助手
+
 本项目是一个纯本机单用户的 Agent 开发面试题库和训练助手。Phase 1A 提供 Agent Topic/Tag、手动题目管理、中文与英文混合搜索、收藏/错题标记、规则驱动练习和 PracticeReview 历史。
 
 ## 开发环境
