@@ -18,7 +18,7 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db import Base
-from .taxonomy import utc_now
+from .taxonomy import Tag, Topic, utc_now
 
 
 class Question(Base):
@@ -67,6 +67,7 @@ class QuestionTopic(Base):
     )
 
     question: Mapped[Question] = relationship(back_populates="topic_links")
+    topic: Mapped[Topic] = relationship()
 
 
 class QuestionTag(Base):
@@ -78,6 +79,7 @@ class QuestionTag(Base):
     tag_id: Mapped[int] = mapped_column(ForeignKey("tag.id", ondelete="RESTRICT"), primary_key=True)
 
     question: Mapped[Question] = relationship(back_populates="tag_links")
+    tag: Mapped[Tag] = relationship()
 
 
 class QuestionState(Base):

@@ -12,10 +12,10 @@ describe("local app shell", () => {
 
     vi.stubGlobal(
       "fetch",
-      vi.fn().mockResolvedValue({
-        ok: true,
-        status: 200,
-        json: async () => ({ status: "ok" }),
+      vi.fn(async (input: RequestInfo | URL) => {
+        const path = String(input);
+        const body = path === "/api/v1/health" ? { status: "ok" } : [];
+        return { ok: true, status: 200, json: async () => body } as Response;
       }),
     );
     const router = createAppRouter(createMemoryHistory());

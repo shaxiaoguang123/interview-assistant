@@ -3,6 +3,7 @@ from __future__ import annotations
 from flask import Flask
 
 from .api.v1.health import blueprint as health_blueprint
+from .api.v1.questions import blueprint as questions_blueprint
 from .api.v1.tags import blueprint as tags_blueprint
 from .api.v1.topics import blueprint as topics_blueprint
 from .config import Config
@@ -21,6 +22,7 @@ def create_app(test_config: dict | None = None) -> Flask:
     init_db(app)
     register_local_security(app)
     app.register_blueprint(health_blueprint)
+    app.register_blueprint(questions_blueprint)
     app.register_blueprint(topics_blueprint)
     app.register_blueprint(tags_blueprint)
 
