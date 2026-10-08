@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { onMounted, ref } from "vue";
+import { RouterLink, RouterView } from "vue-router";
 import { ApiError, request } from "./api/client";
 
 const healthStatus = ref("checking");
@@ -18,5 +19,10 @@ onMounted(async () => {
   <main>
     <h1>Agent Interview Assistant</h1>
     <p role="status">{{ healthStatus }}</p>
+    <nav aria-label="主导航">
+      <RouterLink to="/">题库</RouterLink>
+      <RouterLink to="/taxonomy">分类管理</RouterLink>
+    </nav>
+    <RouterView />
   </main>
 </template>

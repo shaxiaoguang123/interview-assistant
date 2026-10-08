@@ -1,5 +1,7 @@
 import { flushPromises, mount } from "@vue/test-utils";
+import { createMemoryHistory } from "vue-router";
 import { describe, expect, it, vi } from "vitest";
+import { createAppRouter } from "../src/router";
 
 describe("local app shell", () => {
   it("renders the app title and backend health", async () => {
@@ -16,7 +18,9 @@ describe("local app shell", () => {
         json: async () => ({ status: "ok" }),
       }),
     );
-    const wrapper = mount(App!);
+    const router = createAppRouter(createMemoryHistory());
+    const wrapper = mount(App!, { global: { plugins: [router] } });
+    await router.isReady();
     await flushPromises();
 
     expect(wrapper.text()).toContain("Agent Interview Assistant");
