@@ -22,6 +22,7 @@ onMounted(async () => {
     <nav aria-label="主导航">
       <RouterLink to="/">题库</RouterLink>
       <RouterLink to="/taxonomy">分类管理</RouterLink>
+      <RouterLink to="/practice">练习</RouterLink>
     </nav>
     <RouterView />
   </main>

@@ -3,6 +3,8 @@ import { createRouter, createWebHistory, type RouterHistory } from "vue-router";
 import TaxonomyPage from "../pages/TaxonomyPage.vue";
 import QuestionBankPage from "../pages/QuestionBankPage.vue";
 import QuestionDetailPage from "../pages/QuestionDetailPage.vue";
+import PracticeSetupPage from "../pages/PracticeSetupPage.vue";
+import PracticeSessionPage from "../pages/PracticeSessionPage.vue";
 
 const HomePlaceholder = defineComponent({
   name: "HomePlaceholder",
@@ -18,6 +20,8 @@ export function createAppRouter(history: RouterHistory = createWebHistory()) {
       { path: "/", name: "home", component: QuestionBankPage },
       { path: "/questions/:id", name: "question-detail", component: QuestionDetailPage },
       { path: "/taxonomy", name: "taxonomy", component: TaxonomyPage },
+      { path: "/practice", name: "practice-setup", component: PracticeSetupPage },
+      { path: "/practice/sessions/:id", name: "practice-session", component: PracticeSessionPage },
     ],
   });
 }
