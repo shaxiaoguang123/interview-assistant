@@ -2,6 +2,7 @@
 import { computed, onMounted, ref } from "vue";
 import { useRoute } from "vue-router";
 import { ApiError, request } from "../api/client";
+import SourceImageViewer from "../components/SourceImageViewer.vue";
 import QuestionForm from "../components/QuestionForm.vue";
 import TopicTagPicker from "../components/TopicTagPicker.vue";
 
@@ -38,11 +39,20 @@ interface QuestionSourceItem {
   source_asset_id: number;
   source_title: string | null;
   original_filename: string | null;
+  display_width: number;
+  display_height: number;
   source_text_snapshot: string;
   raw_ocr_text_snapshot: string;
   locator_json: { x: number; y: number; width: number; height: number };
   locator_correction_json: { x: number; y: number; width: number; height: number } | null;
   ocr_block_ids: string[];
+  ocr_blocks: Array<{
+    id: string;
+    text: string;
+    bbox: { x: number; y: number; width: number; height: number };
+    reading_order: number;
+    confidence: number | null;
+  }>;
   original_image_url: string;
   display_image_url: string;
 }
@@ -59,6 +69,7 @@ const route = useRoute();
 const question = ref<QuestionDetail | null>(null);
 const reviews = ref<PracticeReviewItem[]>([]);
 const sources = ref<QuestionSourceItem[]>([]);
+const selectedSourceId = ref<number | null>(null);
 const reviewRatingDrafts = ref<Record<number, PracticeReviewItem["review_rating"]>>({});
 const topics = ref<TaxonomyItem[]>([]);
 const tags = ref<TaxonomyItem[]>([]);
@@ -66,6 +77,9 @@ const errorMessage = ref("");
 const loading = ref(true);
 
 const questionId = computed(() => Number(route.params.id));
+const selectedSource = computed(
+  () => sources.value.find((source) => source.question_source_id === selectedSourceId.value) ?? sources.value[0] ?? null,
+);
 
 function displayError(error: unknown): string {
   if (error instanceof ApiError) {
@@ -121,11 +135,16 @@ async function loadQuestion(): Promise<void> {
 
 async function loadQuestionSources(): Promise<void> {
   try {
-    sources.value = await request<QuestionSourceItem[]>(
+    const sourceRows = await request<QuestionSourceItem[]>(
       "/api/v1/questions/" + questionId.value + "/sources",
     );
+    sources.value = sourceRows;
+    if (!sourceRows.some((source) => source.question_source_id === selectedSourceId.value)) {
+      selectedSourceId.value = sourceRows[0]?.question_source_id ?? null;
+    }
   } catch {
     sources.value = [];
+    selectedSourceId.value = null;
   }
 }
 
@@ -242,24 +261,21 @@ onMounted(loadQuestion);
       />
       <section v-if="sources.length" aria-label="题目来源证据">
         <h3>截图来源与 OCR 证据</h3>
-        <article v-for="source in sources" :key="source.question_source_id">
-          <h4>
-            来源区域 {{ source.question_source_id }} ·
-            {{ source.source_title || source.original_filename || ("截图 " + source.source_asset_id) }}
-          </h4>
-          <p>题目来源片段：{{ source.source_text_snapshot }}</p>
-          <details>
-            <summary>查看原始 OCR 文本</summary>
-            <pre>{{ source.raw_ocr_text_snapshot }}</pre>
-          </details>
-          <p>OCR block：{{ source.ocr_block_ids.join(", ") }}</p>
-          <img
-            :src="source.display_image_url"
-            alt="题目来源截图区域预览"
-            style="max-width: 24rem; max-height: 32rem; object-fit: contain"
-          />
-          <a :href="source.original_image_url">打开原始截图</a>
-        </article>
+        <p v-if="selectedSource">
+          {{ selectedSource.source_title || selectedSource.original_filename || ("截图 " + selectedSource.source_asset_id) }}
+        </p>
+        <SourceImageViewer
+          :sources="sources"
+          :selected-source-id="selectedSourceId"
+          :image-width="selectedSource?.display_width ?? 0"
+          :image-height="selectedSource?.display_height ?? 0"
+          @select-source="selectedSourceId = $event"
+        />
+        <details v-if="selectedSource" aria-label="题目来源 OCR 原文">
+          <summary>查看原始 OCR 文本</summary>
+          <pre>{{ selectedSource.raw_ocr_text_snapshot }}</pre>
+          <p>OCR block：{{ selectedSource.ocr_block_ids.join(", ") }}</p>
+        </details>
       </section>
       <section aria-labelledby="practice-history-title">
         <h3 id="practice-history-title">练习掌握度历史</h3>

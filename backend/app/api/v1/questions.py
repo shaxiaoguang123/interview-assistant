@@ -168,6 +168,8 @@ def get_question_sources(question_id: int):
                 "source_title": source.source_asset.title,
                 "original_filename": source.source_asset.original_filename,
                 "mime_type": source.source_asset.mime_type,
+                "display_width": source.source_asset.display_width,
+                "display_height": source.source_asset.display_height,
                 "locator_type": source.locator_type,
                 "locator_json": source.locator_json,
                 "locator_correction_json": source.locator_correction_json,

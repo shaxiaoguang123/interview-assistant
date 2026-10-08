@@ -225,6 +225,7 @@ describe("manual question bank", () => {
     await router.isReady();
     const wrapper = mount(pageModule!.default!, { global: { plugins: [router] } });
     await flushPromises();
+    expect(wrapper.find("[aria-label='截图来源定位']").exists()).toBe(false);
     await wrapper.get("textarea[aria-label='题目正文']").setValue("Updated question text");
     await wrapper.get("form[aria-label='题目表单']").trigger("submit.prevent");
     await flushPromises();
@@ -342,7 +343,7 @@ describe("manual question bank", () => {
     );
   });
 
-  it("shows the OCR source snapshot and original-image link for a question", async () => {
+  it("reuses the source viewer to highlight and switch OCR question sources", async () => {
     const pageModules = import.meta.glob("../src/pages/QuestionDetailPage.vue", { eager: true });
     const pageModule = pageModules["../src/pages/QuestionDetailPage.vue"] as
       | { default?: object }
@@ -356,13 +357,49 @@ describe("manual question bank", () => {
         source_asset_id: 8,
         source_title: "Interview screenshot",
         original_filename: "capture.png",
+        display_width: 1080,
+        display_height: 1800,
         source_text_snapshot: "What is MCP?",
         raw_ocr_text_snapshot: "1. What is MCP?\nMCP protocol details",
         locator_json: { x: 0.1, y: 0.2, width: 0.5, height: 0.1 },
-        locator_correction_json: null,
+        locator_correction_json: { x: 0.2, y: 0.25, width: 0.45, height: 0.12 },
         ocr_block_ids: ["block-uuid-1"],
+        ocr_blocks: [
+          {
+            id: "block-uuid-1",
+            text: "What is MCP?",
+            bbox: { x: 0.1, y: 0.2, width: 0.5, height: 0.1 },
+            reading_order: 0,
+            confidence: 0.95,
+          },
+        ],
         original_image_url: "/api/v1/sources/8/original",
         display_image_url: "/api/v1/sources/8/display",
+      },
+      {
+        question_source_id: 92,
+        question_id: 1,
+        source_asset_id: 9,
+        source_title: "Second screenshot",
+        original_filename: "second.png",
+        display_width: 800,
+        display_height: 1200,
+        source_text_snapshot: "How does MCP connect tools?",
+        raw_ocr_text_snapshot: "How does MCP connect tools?\nOther text",
+        locator_json: { x: 0.4, y: 0.5, width: 0.4, height: 0.12 },
+        locator_correction_json: null,
+        ocr_block_ids: ["block-uuid-2"],
+        ocr_blocks: [
+          {
+            id: "block-uuid-2",
+            text: "How does MCP connect tools?",
+            bbox: { x: 0.4, y: 0.5, width: 0.4, height: 0.12 },
+            reading_order: 0,
+            confidence: 0.9,
+          },
+        ],
+        original_image_url: "/api/v1/sources/9/original",
+        display_image_url: "/api/v1/sources/9/display",
       },
     ];
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
@@ -392,8 +429,18 @@ describe("manual question bank", () => {
     expect(wrapper.get("[aria-label='题目来源证据']").text()).toContain("What is MCP?");
     expect(wrapper.text()).toContain("1. What is MCP?");
     expect(wrapper.get("a[href='/api/v1/sources/8/original']").exists()).toBe(true);
-    expect(wrapper.get("img[alt='题目来源截图区域预览']").attributes("src")).toBe(
+    expect(wrapper.get("[aria-label='截图来源定位']").exists()).toBe(true);
+    expect(wrapper.get("[data-source-region-id='91']").attributes("x")).toBe("216");
+    expect(wrapper.get("img[alt='EXIF 方向校正后的截图预览']").attributes("src")).toBe(
       "/api/v1/sources/8/display",
     );
+    await wrapper.get("button[aria-label='来源区域 92']").trigger("click");
+    await flushPromises();
+    expect(wrapper.get("img[alt='EXIF 方向校正后的截图预览']").attributes("src")).toBe(
+      "/api/v1/sources/9/display",
+    );
+    expect(wrapper.get("[data-source-region-id='92']").attributes("data-selected")).toBe("true");
+    expect(wrapper.get("[aria-label='题目来源证据']").text()).toContain("Other text");
+    expect(wrapper.get("a[href='/api/v1/sources/9/original']").exists()).toBe(true);
   });
 });

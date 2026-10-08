@@ -25,6 +25,12 @@ interface QuestionSource {
   ocr_blocks: OCRBlock[];
 }
 
+interface OCRPreview {
+  source_asset_id: number;
+  text: string;
+  ocr_blocks: OCRBlock[];
+}
+
 const props = withDefaults(
   defineProps<{
     sources: QuestionSource[];
@@ -33,12 +39,14 @@ const props = withDefaults(
     imageHeight?: number;
     containerWidth?: number;
     containerHeight?: number;
+    preview?: OCRPreview | null;
   }>(),
   {
     imageWidth: 0,
     imageHeight: 0,
     containerWidth: 0,
     containerHeight: 0,
+    preview: null,
   },
 );
 
@@ -58,14 +66,21 @@ const selectedSource = computed(
     props.sources.find((source) => source.question_source_id === props.selectedSourceId) ??
     props.sources[0],
 );
-const displayedAssetId = computed(() => selectedSource.value?.source_asset_id ?? null);
+const displayedAssetId = computed(
+  () => selectedSource.value?.source_asset_id ?? props.preview?.source_asset_id ?? null,
+);
 const displayedSources = computed(() =>
-  props.sources.filter((source) => source.source_asset_id === displayedAssetId.value),
+  selectedSource.value
+    ? props.sources.filter((source) => source.source_asset_id === displayedAssetId.value)
+    : [],
 );
 const blockOverlays = computed(() => {
   const unique = new Map<string, OCRBlock>();
   for (const source of displayedSources.value) {
     for (const block of source.ocr_blocks) unique.set(block.id, block);
+  }
+  if (props.preview?.source_asset_id === displayedAssetId.value) {
+    for (const block of props.preview.ocr_blocks) unique.set(block.id, block);
   }
   return [...unique.values()].sort(
     (left, right) => left.reading_order - right.reading_order || left.id.localeCompare(right.id),
@@ -135,7 +150,7 @@ onBeforeUnmount(() => resizeObserver?.disconnect());
     :data-source-asset-id="displayedAssetId ?? undefined"
     aria-label="截图来源定位"
   >
-    <div class="source-row-list" aria-label="题目来源区域">
+    <div v-if="sources.length" class="source-row-list" aria-label="题目来源区域">
       <button
         v-for="source in sources"
         :key="source.question_source_id"
@@ -147,8 +162,8 @@ onBeforeUnmount(() => resizeObserver?.disconnect());
         来源 {{ source.question_source_id }} · 截图 {{ source.source_asset_id }}
       </button>
     </div>
-    <p v-if="selectedSource" class="source-evidence">
-      {{ selectedSource.source_text_snapshot }}
+    <p v-if="selectedSource || preview" class="source-evidence">
+      {{ selectedSource?.source_text_snapshot ?? preview?.text }}
     </p>
     <div
       ref="stage"
