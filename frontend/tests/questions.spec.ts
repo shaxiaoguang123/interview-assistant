@@ -29,6 +29,39 @@ function makeQuestion(id: number, text: string, archivedAt: string | null = null
 }
 
 describe("manual question bank", () => {
+  it("searches a query and renders matching questions", async () => {
+    const pageModules = import.meta.glob("../src/pages/QuestionBankPage.vue", { eager: true });
+    const pageModule = pageModules["../src/pages/QuestionBankPage.vue"] as
+      | { default?: object }
+      | undefined;
+    expect(pageModule, "missing feature: QuestionBankPage.vue").toBeDefined();
+    const Page = pageModule!.default;
+    const match = makeQuestion(11, "MCP 通信协议如何工作？");
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const path = String(input);
+      if (path === "/api/v1/topics" || path === "/api/v1/tags") {
+        return { ok: true, status: 200, json: async () => [] } as Response;
+      }
+      if (path === "/api/v1/questions") {
+        return { ok: true, status: 200, json: async () => [] } as Response;
+      }
+      if (path === "/api/v1/questions?q=MCP") {
+        return { ok: true, status: 200, json: async () => [match] } as Response;
+      }
+      throw new Error(`Unexpected request: ${path}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const wrapper = mount(Page!, { global: { stubs: { RouterLink: RouterLinkStub } } });
+    await flushPromises();
+    await wrapper.get("input[aria-label='搜索题目']").setValue("MCP");
+    await wrapper.get("form[aria-label='题库搜索']").trigger("submit.prevent");
+    await flushPromises();
+
+    expect(fetchMock).toHaveBeenCalledWith("/api/v1/questions?q=MCP", expect.anything());
+    expect(wrapper.text()).toContain("MCP 通信协议如何工作？");
+  });
+
   it("creates and archives a question with taxonomy links", async () => {
     const pageModules = import.meta.glob("../src/pages/QuestionBankPage.vue", { eager: true });
     const pageModule = pageModules["../src/pages/QuestionBankPage.vue"] as

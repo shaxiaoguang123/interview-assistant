@@ -26,7 +26,10 @@ const topics = ref<TaxonomyItem[]>([]);
 const tags = ref<TaxonomyItem[]>([]);
 const selectedTopicIds = ref<number[]>([]);
 const selectedTagIds = ref<number[]>([]);
+const searchQuery = ref("");
 const includeArchived = ref(false);
+const favoriteOnly = ref(false);
+const wrongOnly = ref(false);
 const errorMessage = ref("");
 const loading = ref(false);
 const showForm = ref(false);
@@ -52,7 +55,10 @@ async function loadQuestions(): Promise<void> {
   loading.value = true;
   errorMessage.value = "";
   const params = new URLSearchParams();
+  if (searchQuery.value.trim()) params.set("q", searchQuery.value.trim());
   if (includeArchived.value) params.set("include_archived", "true");
+  if (favoriteOnly.value) params.set("is_favorite", "true");
+  if (wrongOnly.value) params.set("is_wrong", "true");
   for (const id of selectedTopicIds.value) params.append("topic_ids", String(id));
   for (const id of selectedTagIds.value) params.append("tag_ids", String(id));
   try {
@@ -112,6 +118,11 @@ onMounted(async () => {
     <h2 id="question-bank-title">Agent 面试题库</h2>
     <p v-if="errorMessage" role="alert">{{ errorMessage }}</p>
 
+    <form role="search" aria-label="题库搜索" @submit.prevent="loadQuestions">
+      <input v-model="searchQuery" aria-label="搜索题目" />
+      <button type="submit" aria-label="搜索题库">搜索</button>
+    </form>
+
     <div aria-label="题库筛选">
       <label>
         Topic
@@ -132,6 +143,14 @@ onMounted(async () => {
       <label>
         <input v-model="includeArchived" type="checkbox" aria-label="显示归档题目" />
         显示归档题目
+      </label>
+      <label>
+        <input v-model="favoriteOnly" type="checkbox" aria-label="仅显示收藏题目" />
+        仅收藏
+      </label>
+      <label>
+        <input v-model="wrongOnly" type="checkbox" aria-label="仅显示错题" />
+        仅错题
       </label>
       <button type="button" @click="loadQuestions">筛选</button>
     </div>

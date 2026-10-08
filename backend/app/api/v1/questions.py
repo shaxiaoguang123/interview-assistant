@@ -12,6 +12,7 @@ from app.services.questions import (
     update_question,
     update_question_state,
 )
+from app.services.search import search_questions
 
 
 blueprint = Blueprint("questions_v1", __name__, url_prefix="/api/v1")
@@ -82,14 +83,19 @@ def _parse_bool_arg(field: str, default: bool | None) -> bool | None:
 
 @blueprint.get("/questions")
 def get_questions():
-    questions = list_questions(
-        get_session(),
-        include_archived=_parse_bool_arg("include_archived", False) or False,
-        topic_ids=_parse_id_filters("topic_ids"),
-        tag_ids=_parse_id_filters("tag_ids"),
-        is_favorite=_parse_bool_arg("is_favorite", None),
-        is_wrong=_parse_bool_arg("is_wrong", None),
-    )
+    session = get_session()
+    filters = {
+        "include_archived": _parse_bool_arg("include_archived", False) or False,
+        "topic_ids": _parse_id_filters("topic_ids"),
+        "tag_ids": _parse_id_filters("tag_ids"),
+        "is_favorite": _parse_bool_arg("is_favorite", None),
+        "is_wrong": _parse_bool_arg("is_wrong", None),
+    }
+    query = request.args.get("q")
+    if query is not None:
+        questions = search_questions(session, query, filters)
+    else:
+        questions = list_questions(session, **filters)
     return jsonify([_question_json(question) for question in questions])
 
 
