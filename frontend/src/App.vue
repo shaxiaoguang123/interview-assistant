@@ -21,6 +21,7 @@ onMounted(async () => {
     <p role="status">{{ healthStatus }}</p>
     <nav aria-label="主导航">
       <RouterLink to="/">题库</RouterLink>
+      <RouterLink to="/inbox">截图收件箱</RouterLink>
       <RouterLink to="/taxonomy">分类管理</RouterLink>
       <RouterLink to="/practice">练习</RouterLink>
     </nav>
