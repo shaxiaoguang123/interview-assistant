@@ -19,4 +19,12 @@ def create_app(test_config: dict | None = None) -> Flask:
     init_db(app)
     register_local_security(app)
     app.register_blueprint(health_blueprint)
+
+    if app.config.get("SEED_TOPICS_ON_STARTUP", False):
+        from .services.topic_seed import seed_initial_topics
+
+        session_factory = app.extensions["sqlalchemy_session_factory"]
+        with session_factory.begin() as session:
+            seed_initial_topics(session)
+
     return app
