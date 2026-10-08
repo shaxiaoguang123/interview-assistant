@@ -5,6 +5,7 @@ from pathlib import Path
 import threading
 from queue import Queue
 from datetime import datetime, timezone
+from uuid import uuid4
 
 from PIL import Image
 from werkzeug.datastructures import FileStorage
@@ -17,7 +18,7 @@ from app.models.ingestion import (
     QuestionSourceOCRBlock,
 )
 from app.models.question import Question
-from app.ocr.adapter import OCRDetection
+from app.ocr.adapter import OCRAdapterInitializationError, OCRDetection
 from app.services.source_storage import save_source_file
 
 
@@ -97,6 +98,127 @@ def test_run_claim_is_atomic_under_two_requests(app):
     first = first_result.get_nowait()
     assert first.status_code == 200
     assert first.get_json()["job"]["status"] == "succeeded"
+
+
+def test_two_different_jobs_share_one_adapter_without_concurrent_inference(
+    client, app, monkeypatch
+):
+    service = import_module("app.services.ingestion")
+    _, first_job = _upload_source(client)
+    _, second_job = _upload_source(client)
+    first_entered = threading.Event()
+    second_entered = threading.Event()
+    release_first = threading.Event()
+    second_claimed = threading.Event()
+    guard = threading.Lock()
+    calls = {"factory": 0, "recognize": 0, "active": 0, "max_active": 0}
+    detection = OCRDetection(
+        id=str(uuid4()),
+        text="Question from the second job",
+        bbox=(0.1, 0.2, 0.5, 0.2),
+        confidence=0.9,
+        reading_order=0,
+    )
+
+    class SharedAdapter:
+        name = "shared-test-ocr"
+        version = "shared-test;provider=CPUExecutionProvider"
+
+        def recognize(self, image):
+            with guard:
+                calls["recognize"] += 1
+                call_number = calls["recognize"]
+                calls["active"] += 1
+                calls["max_active"] = max(calls["max_active"], calls["active"])
+            try:
+                assert image.size == (12, 8)
+                if call_number == 1:
+                    first_entered.set()
+                    release_first.wait(timeout=3)
+                    raise RuntimeError("first job OCR failure")
+                second_entered.set()
+                return [detection]
+            finally:
+                with guard:
+                    calls["active"] -= 1
+
+    adapter = SharedAdapter()
+
+    def factory():
+        with guard:
+            calls["factory"] += 1
+        return adapter
+
+    app.config["OCR_ADAPTER_FACTORY"] = factory
+    original_claim = service.claim_queued_job
+
+    def signal_second_claim(app_object, job_id):
+        original_claim(app_object, job_id)
+        if job_id == second_job["id"]:
+            second_claimed.set()
+
+    monkeypatch.setattr(service, "claim_queued_job", signal_second_claim)
+    results = Queue()
+
+    def run(job_id):
+        results.put((job_id, service.run_ingestion(app, job_id)))
+
+    first = threading.Thread(target=run, args=(first_job["id"],))
+    second = threading.Thread(target=run, args=(second_job["id"],))
+    first.start()
+    assert first_entered.wait(timeout=3), "first job did not enter OCR"
+    second.start()
+    try:
+        assert second_claimed.wait(timeout=3), "second job was not claimed"
+        assert not second_entered.wait(timeout=0.1)
+    finally:
+        release_first.set()
+        first.join(timeout=5)
+        second.join(timeout=5)
+
+    assert not first.is_alive()
+    assert not second.is_alive()
+    outcomes = {job_id: result["status"] for job_id, result in [results.get(), results.get()]}
+    assert outcomes == {first_job["id"]: "failed", second_job["id"]: "succeeded"}
+    assert calls["factory"] == 1
+    assert calls["recognize"] == 2
+    assert calls["max_active"] == 1
+
+
+def test_adapter_initialization_failure_for_one_job_does_not_poison_another(app):
+    service = import_module("app.services.ingestion")
+    _, first_job = _upload_source(app.test_client())
+    _, second_job = _upload_source(app.test_client())
+    calls = []
+
+    def factory():
+        calls.append(len(calls) + 1)
+        if len(calls) == 1:
+            raise OCRAdapterInitializationError(
+                "OCR_MODEL_INVALID",
+                "Local OCR model validation failed",
+            )
+        return _fake_adapter(
+            detections=[
+                OCRDetection(
+                    id=str(uuid4()),
+                    text="Second job question",
+                    bbox=(0.1, 0.2, 0.5, 0.2),
+                    confidence=0.9,
+                    reading_order=0,
+                )
+            ]
+        )
+
+    app.config["OCR_ADAPTER_FACTORY"] = factory
+    first_result = service.run_ingestion(app, first_job["id"])
+    second_result = service.run_ingestion(app, second_job["id"])
+
+    assert first_result["status"] == "failed"
+    assert first_result["error_code"] == "OCR_MODEL_INVALID"
+    assert second_result["status"] == "succeeded"
+    assert second_result["candidate_count"] == 1
+    assert calls == [1, 2]
 
 
 def test_non_queued_run_returns_conflict(client):

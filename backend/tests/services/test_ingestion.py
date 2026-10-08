@@ -3,7 +3,9 @@ from io import BytesIO
 from pathlib import Path
 import subprocess
 import sys
+import threading
 import uuid
+from queue import Queue
 
 from PIL import Image
 import pytest
@@ -414,3 +416,51 @@ def test_adapter_factory_is_lazy_and_cached(app):
     assert module.get_ocr_adapter(app) is fake
     assert module.get_ocr_adapter(app) is fake
     assert calls == ["initialized"]
+
+
+def test_adapter_initialization_is_serialized_across_threads(app):
+    module = import_module("app.ocr")
+    factory_entered = threading.Event()
+    release_factory = threading.Event()
+    second_started = threading.Event()
+    second_finished = threading.Event()
+    calls = []
+    results = Queue()
+    adapters = [FakeOCRAdapter(), FakeOCRAdapter()]
+
+    def factory():
+        calls.append(len(calls))
+        if len(calls) == 1:
+            factory_entered.set()
+            release_factory.wait(timeout=3)
+        return adapters[len(calls) - 1]
+
+    app.config["OCR_ADAPTER_FACTORY"] = factory
+
+    def initialize_first():
+        results.put(module.get_ocr_adapter(app))
+
+    def initialize_second():
+        second_started.set()
+        results.put(module.get_ocr_adapter(app))
+        second_finished.set()
+
+    first = threading.Thread(target=initialize_first)
+    second = threading.Thread(target=initialize_second)
+    first.start()
+    assert factory_entered.wait(timeout=3), "first adapter factory did not start"
+    second.start()
+    try:
+        assert second_started.wait(timeout=3)
+        assert not second_finished.wait(timeout=0.1)
+    finally:
+        release_factory.set()
+        first.join(timeout=3)
+        second.join(timeout=3)
+
+    assert not first.is_alive()
+    assert not second.is_alive()
+    assert len(calls) == 1
+    first_adapter = results.get_nowait()
+    second_adapter = results.get_nowait()
+    assert first_adapter is second_adapter is adapters[0]
