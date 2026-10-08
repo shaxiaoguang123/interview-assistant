@@ -42,15 +42,24 @@ _ALLOWED_METADATA_FIELDS = {
     "captured_at",
     "metadata_json",
 }
+_STRING_METADATA_LIMITS = {
+    "platform": 80,
+    "external_id": 240,
+    "author": 240,
+}
 
 
 def _validation_error(message: str, field: str = "file") -> ApiError:
     return ApiError(400, "VALIDATION_ERROR", message, {field: message})
 
 
-def _parse_metadata(metadata: dict[str, Any] | None) -> dict[str, Any]:
+def parse_source_metadata(
+    metadata: object | None,
+    *,
+    partial: bool = False,
+) -> dict[str, Any]:
     if metadata is None:
-        return {}
+        return {} if partial else {"metadata_json": {}}
     if not isinstance(metadata, dict):
         raise _validation_error("Metadata must be a JSON object", "metadata")
     unknown = set(metadata) - _ALLOWED_METADATA_FIELDS
@@ -60,19 +69,32 @@ def _parse_metadata(metadata: dict[str, Any] | None) -> dict[str, Any]:
             "metadata",
         )
     data = dict(metadata)
-    captured_at = data.get("captured_at")
-    if captured_at is not None:
+    for field in ("platform", "source_url", "external_id", "title", "author"):
+        value = data.get(field)
+        if value is not None and not isinstance(value, str):
+            raise _validation_error("Must be a string or null", field)
+        maximum = _STRING_METADATA_LIMITS.get(field)
+        if value is not None and maximum is not None and len(value) > maximum:
+            raise _validation_error(f"Must be at most {maximum} characters", field)
+
+    if "captured_at" in data and data["captured_at"] is not None:
+        captured_at = data["captured_at"]
         if not isinstance(captured_at, str):
-            raise _validation_error("captured_at must be an ISO-8601 string", "metadata")
+            raise _validation_error("Must be an ISO-8601 string or null", "captured_at")
         try:
             data["captured_at"] = datetime.fromisoformat(captured_at.replace("Z", "+00:00"))
         except ValueError as error:
-            raise _validation_error("captured_at must be an ISO-8601 string", "metadata") from error
-    extra = data.get("metadata_json", {})
-    if not isinstance(extra, dict):
-        raise _validation_error("metadata_json must be an object", "metadata")
-    data["metadata_json"] = extra
+            raise _validation_error("Must be an ISO-8601 string", "captured_at") from error
+    if "metadata_json" in data:
+        if not isinstance(data["metadata_json"], dict):
+            raise _validation_error("Must be an object", "metadata_json")
+    elif not partial:
+        data["metadata_json"] = {}
     return data
+
+
+def _parse_metadata(metadata: dict[str, Any] | None) -> dict[str, Any]:
+    return parse_source_metadata(metadata)
 
 
 def _read_original(file_storage: FileStorage, max_bytes: int) -> bytes:

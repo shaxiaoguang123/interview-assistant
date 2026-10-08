@@ -18,6 +18,7 @@ from app.repositories.sources import (
 from app.services.source_storage import (
     cleanup_source_files,
     delete_unreferenced_source,
+    parse_source_metadata,
     resolve_storage_path,
     save_source_file,
 )
@@ -117,7 +118,6 @@ def _rejected_result(error: ApiError) -> dict:
 
 @blueprint.post("/sources")
 def post_sources():
-    metadata = _metadata_payload(request.form.get("metadata"))
     files = request.files.getlist("files")
     if not files:
         raise ApiError(400, "VALIDATION_ERROR", "No images were uploaded", {"files": "Required"})
@@ -129,13 +129,32 @@ def post_sources():
             "Too many images in one upload",
             {"files": f"Upload at most {max_files} images"},
         )
+    metadata_values = request.form.getlist("metadata")
+    if len(metadata_values) > 1 and len(metadata_values) != len(files):
+        raise ApiError(
+            400,
+            "VALIDATION_ERROR",
+            "Invalid source metadata",
+            {"metadata": "Provide one shared object or one object per uploaded image"},
+        )
+    per_file_metadata = len(metadata_values) > 1
+    shared_metadata = (
+        _metadata_payload(metadata_values[0])
+        if len(metadata_values) == 1
+        else {}
+    )
 
     results: list[dict] = []
     storage_root = current_app.config["SOURCE_STORAGE_DIR"]
     session_factory = current_app.extensions["sqlalchemy_session_factory"]
-    for file_storage in files:
+    for index, file_storage in enumerate(files):
         source_asset = None
         try:
+            metadata = (
+                _metadata_payload(metadata_values[index])
+                if per_file_metadata
+                else shared_metadata
+            )
             source_asset = save_source_file(file_storage, storage_root, metadata)
             with session_factory.begin() as session:
                 add_source_asset(session, source_asset)
@@ -200,57 +219,7 @@ def patch_source(source_id: int):
             "Invalid source update",
             {"body": "Expected a non-empty JSON object"},
         )
-    allowed = {
-        "platform",
-        "source_url",
-        "external_id",
-        "title",
-        "author",
-        "captured_at",
-        "metadata_json",
-    }
-    unknown = set(payload) - allowed
-    if unknown:
-        raise ApiError(
-            400,
-            "VALIDATION_ERROR",
-            "Invalid source update",
-            {"body": f"Unsupported fields: {', '.join(sorted(unknown))}"},
-        )
-    text_fields = {"platform", "source_url", "external_id", "title", "author"}
-    for field in sorted(text_fields & payload.keys()):
-        if payload[field] is not None and not isinstance(payload[field], str):
-            raise ApiError(
-                400,
-                "VALIDATION_ERROR",
-                "Invalid source update",
-                {field: "Must be a string or null"},
-            )
-    if "metadata_json" in payload and not isinstance(payload["metadata_json"], dict):
-        raise ApiError(
-            400,
-            "VALIDATION_ERROR",
-            "Invalid source update",
-            {"metadata_json": "Must be an object"},
-        )
-    if "captured_at" in payload and payload["captured_at"] is not None:
-        value = payload["captured_at"]
-        if not isinstance(value, str):
-            raise ApiError(
-                400,
-                "VALIDATION_ERROR",
-                "Invalid source update",
-                {"captured_at": "Must be an ISO-8601 string"},
-            )
-        try:
-            payload["captured_at"] = datetime.fromisoformat(value.replace("Z", "+00:00"))
-        except ValueError as error:
-            raise ApiError(
-                400,
-                "VALIDATION_ERROR",
-                "Invalid source update",
-                {"captured_at": "Must be an ISO-8601 string"},
-            ) from error
+    payload = parse_source_metadata(payload, partial=True)
 
     session: Session = get_session()
     with session.begin():

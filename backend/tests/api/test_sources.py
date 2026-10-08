@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 from PIL import Image
+import pytest
 from sqlalchemy import event
 from sqlalchemy.exc import StatementError
 from sqlalchemy.orm import Session
@@ -222,6 +223,28 @@ def test_source_patch_rejects_non_string_metadata_without_logging_values(client)
     assert "title" in response.get_json()["error"]["fields"]
 
 
+@pytest.mark.parametrize(
+    ("payload", "field"),
+    [
+        ({"platform": {"name": "x"}}, "platform"),
+        ({"source_url": []}, "source_url"),
+        ({"external_id": ["x"]}, "external_id"),
+        ({"title": {"value": "x"}}, "title"),
+        ({"author": ["x"]}, "author"),
+        ({"captured_at": "not-an-iso-date"}, "captured_at"),
+        ({"metadata_json": []}, "metadata_json"),
+    ],
+)
+def test_source_patch_uses_upload_metadata_validation(client, payload, field):
+    source = _stored_result(_upload(client, [(BytesIO(_png_bytes()), "patch-metadata.png")]))["source"]
+
+    response = client.patch(f"/api/v1/sources/{source['id']}", json=payload)
+
+    assert response.status_code == 400
+    assert response.get_json()["error"]["code"] == "VALIDATION_ERROR"
+    assert field in response.get_json()["error"]["fields"]
+
+
 def test_source_database_errors_do_not_log_metadata_or_sql_parameters(client, monkeypatch):
     source = _stored_result(_upload(client, [(BytesIO(_png_bytes()), "metadata.png")]))["source"]
     private_marker = "SOURCE-METADATA-PRIVATE-MARKER"
@@ -254,3 +277,59 @@ def test_source_database_errors_do_not_log_metadata_or_sql_parameters(client, mo
     assert response.get_json()["error"]["code"] == "INTERNAL_ERROR"
     assert any("StatementError" in str(args) for args, _kwargs in logged)
     assert private_marker not in repr(logged)
+
+
+@pytest.mark.parametrize(
+    ("metadata", "field"),
+    [
+        ({"platform": {"name": "x"}}, "platform"),
+        ({"source_url": ["https://example.invalid"]}, "source_url"),
+        ({"external_id": {"value": "x"}}, "external_id"),
+        ({"title": {"value": "x"}}, "title"),
+        ({"author": ["x"]}, "author"),
+        ({"captured_at": "not-an-iso-date"}, "captured_at"),
+        ({"metadata_json": []}, "metadata_json"),
+    ],
+)
+def test_upload_rejects_invalid_metadata_types_with_field_errors(client, app, metadata, field):
+    response = _upload(client, [(BytesIO(_png_bytes()), "invalid-metadata.png")], metadata)
+
+    assert response.status_code == 200
+    result = response.get_json()["results"][0]
+    assert result["status"] == "rejected"
+    assert result["error"]["code"] == "VALIDATION_ERROR"
+    assert field in result["error"]["fields"]
+    with app.app_context():
+        session = app.extensions["sqlalchemy_session_factory"]()
+        assert session.query(SourceAsset).count() == 0
+        assert session.query(IngestionJob).count() == 0
+        session.close()
+
+
+def test_multi_upload_isolates_per_file_metadata_validation(client, app):
+    files = [
+        (BytesIO(_png_bytes(color=(1, 2, 3))), "valid-metadata.png"),
+        (BytesIO(_png_bytes(color=(4, 5, 6))), "invalid-metadata.png"),
+    ]
+    metadata = [
+        json.dumps({"title": "Valid source"}),
+        json.dumps({"title": {"private": "must not reach SQL"}}),
+    ]
+
+    response = client.post(
+        "/api/v1/sources",
+        data={"files": files, "metadata": metadata},
+        content_type="multipart/form-data",
+    )
+
+    assert response.status_code == 200
+    results = response.get_json()["results"]
+    assert [item["status"] for item in results] == ["stored", "rejected"]
+    assert results[1]["error"]["code"] == "VALIDATION_ERROR"
+    assert "title" in results[1]["error"]["fields"]
+    assert client.get(f"/api/v1/sources/{results[0]['source']['id']}/original").status_code == 200
+    with app.app_context():
+        session = app.extensions["sqlalchemy_session_factory"]()
+        assert session.query(SourceAsset).count() == 1
+        assert session.query(IngestionJob).count() == 1
+        session.close()
