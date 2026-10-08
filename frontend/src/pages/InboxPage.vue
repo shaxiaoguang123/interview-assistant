@@ -48,6 +48,9 @@ interface Candidate {
   status: string;
   candidate_state: string;
   candidate_revision: number;
+  split_from_candidate_id: number | null;
+  split_child_ids: number[];
+  superseded_by_candidate_id: number | null;
   topics: Array<{ id: number; name: string; is_active: boolean }>;
   tags: Array<{ id: number; name: string; is_active: boolean }>;
   sources: Array<{
@@ -96,6 +99,9 @@ const historyError = ref("");
 const candidateBusy = ref(false);
 const selectedMergeIds = ref<number[]>([]);
 const mergeFinalText = ref("");
+const manualCreateOpen = ref(false);
+const manualBlockIds = ref<string[]>([]);
+const manualCandidateText = ref("");
 let jobLoadRevision = 0;
 
 const jobs = computed(() =>
@@ -114,6 +120,22 @@ const selectedSourceAsset = computed(() => {
   return sources.value.find((source) => source.id === sourceId) ?? selectedJob.value?.source ?? null;
 });
 const selectedCandidateSources = computed(() => selectedCandidate.value?.sources ?? []);
+const selectedManualBlocks = computed(() => {
+  const selected = new Set(manualBlockIds.value);
+  return ocrBlocks.value.filter((block) => selected.has(block.id));
+});
+const manualSourceText = computed(() =>
+  selectedManualBlocks.value.map((block) => block.text).join("\n"),
+);
+const manualCandidatePreview = computed(() => {
+  const asset = selectedJob.value?.source;
+  if (!manualCreateOpen.value || !asset || selectedManualBlocks.value.length === 0) return null;
+  return {
+    source_asset_id: asset.id,
+    text: manualSourceText.value,
+    ocr_blocks: selectedManualBlocks.value,
+  };
+});
 
 function setJob(job: IngestionJob) {
   const asset = sources.value.find((source) => source.id === job.source_asset_id);
@@ -129,7 +151,10 @@ function setJob(job: IngestionJob) {
 }
 
 function errorMessage(error: unknown): string {
-  if (error instanceof ApiError) return error.message;
+  if (error instanceof ApiError) {
+    const details = Object.values(error.fields);
+    return details.length ? `${error.message}: ${details.join("；")}` : error.message;
+  }
   if (error instanceof Error) return error.message;
   return "请求失败";
 }
@@ -242,13 +267,20 @@ async function uploadFiles(files: File[]) {
   }
 }
 
-async function openJob(jobId: number) {
+async function openJob(
+  jobId: number,
+  preferredCandidateId: number | null = null,
+  preferredSourceId: number | null = null,
+) {
   const requestRevision = ++jobLoadRevision;
   selectedJobId.value = jobId;
   selectedCandidateId.value = null;
   selectedSourceId.value = null;
   candidates.value = [];
   ocrBlocks.value = [];
+  manualCreateOpen.value = false;
+  manualBlockIds.value = [];
+  manualCandidateText.value = "";
   historyError.value = "";
   try {
     const [candidateRows, blocks] = await Promise.all([
@@ -258,43 +290,101 @@ async function openJob(jobId: number) {
     if (requestRevision !== jobLoadRevision) return;
     candidates.value = candidateRows;
     ocrBlocks.value = blocks;
-    if (candidateRows.length) selectCandidate(candidateRows[0]);
+    const preferred = candidateRows.find((candidate) => candidate.id === preferredCandidateId);
+    const nextPending = candidateRows.find(
+      (candidate) => candidate.candidate_state === "pending_review" && !candidate.archived_at,
+    );
+    const candidate = preferred ?? nextPending ?? candidateRows[0];
+    if (candidate) selectCandidate(candidate, preferredSourceId);
   } catch (error) {
     if (requestRevision === jobLoadRevision) historyError.value = errorMessage(error);
   }
 }
 
-function selectCandidate(candidate: Candidate) {
+function selectCandidate(candidate: Candidate, preferredSourceId: number | null = null) {
   selectedCandidateId.value = candidate.id;
-  selectedSourceId.value = candidate.sources[0]?.question_source_id ?? null;
+  selectedSourceId.value =
+    candidate.sources.find((source) => source.question_source_id === preferredSourceId)
+      ?.question_source_id ?? candidate.sources[0]?.question_source_id ?? null;
   selectedMergeIds.value = [];
   mergeFinalText.value = candidate.text;
 }
 
-async function refreshCurrentJob() {
-  if (selectedJobId.value !== null) await openJob(selectedJobId.value);
+async function openHistoricalJob(jobId: number) {
+  const preserveSelection = selectedJobId.value === jobId;
+  await openJob(
+    jobId,
+    preserveSelection ? selectedCandidateId.value : null,
+    preserveSelection ? selectedSourceId.value : null,
+  );
+}
+
+async function refreshCurrentJob(
+  preferredCandidateId: number | null = selectedCandidateId.value,
+  preferredSourceId: number | null = selectedSourceId.value,
+  expectedJobId: number | null = selectedJobId.value,
+) {
+  if (expectedJobId !== null && selectedJobId.value === expectedJobId) {
+    await openJob(expectedJobId, preferredCandidateId, preferredSourceId);
+  }
+}
+
+function conflictMessage(error: unknown, fallback: string): string {
+  return error instanceof ApiError && error.status === 409
+    ? fallback
+    : errorMessage(error);
+}
+
+async function createManualCandidate() {
+  const jobId = selectedJobId.value;
+  if (jobId === null || manualBlockIds.value.length === 0) return;
+  candidateBusy.value = true;
+  historyError.value = "";
+  const payload: { ocr_block_ids: string[]; text?: string } = {
+    ocr_block_ids: [...manualBlockIds.value],
+  };
+  if (manualCandidateText.value.trim()) payload.text = manualCandidateText.value;
+  try {
+    const candidate = await request<Candidate>(
+      "/api/v1/ingestions/" + jobId + "/candidates",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      },
+    );
+    await refreshCurrentJob(candidate.id, candidate.sources[0]?.question_source_id ?? null, jobId);
+  } catch (error) {
+    historyError.value = conflictMessage(error, "导入任务状态已变化，请刷新后重试。");
+  } finally {
+    candidateBusy.value = false;
+  }
 }
 
 async function patchCandidate(payload: Record<string, unknown>) {
-  if (selectedCandidateId.value === null) return;
+  if (selectedCandidateId.value === null || selectedJobId.value === null) return;
+  const jobId = selectedJobId.value;
+  const candidateId = selectedCandidateId.value;
+  const sourceId = selectedSourceId.value;
   candidateBusy.value = true;
   historyError.value = "";
   try {
     await request<Candidate>(
-      "/api/v1/ingestion-candidates/" + selectedCandidateId.value,
+      "/api/v1/ingestion-candidates/" + candidateId,
       {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       },
     );
-    await refreshCurrentJob();
+    await refreshCurrentJob(candidateId, sourceId, jobId);
   } catch (error) {
-    historyError.value =
-      error instanceof ApiError && error.status === 409
-        ? "候选内容已被其他操作更新，请刷新后重试。"
-        : errorMessage(error);
-    if (error instanceof ApiError && error.status === 409) await refreshCurrentJob();
+    if (error instanceof ApiError && error.status === 409) {
+      await refreshCurrentJob(candidateId, sourceId, jobId);
+      historyError.value = "候选内容已被其他操作更新，请刷新后重试。";
+    } else {
+      historyError.value = errorMessage(error);
+    }
   } finally {
     candidateBusy.value = false;
   }
@@ -302,14 +392,17 @@ async function patchCandidate(payload: Record<string, unknown>) {
 
 async function splitCandidate(payload: Record<string, unknown>) {
   if (selectedJobId.value === null || selectedCandidateId.value === null) return;
+  const jobId = selectedJobId.value;
+  const candidateId = selectedCandidateId.value;
+  const sourceId = selectedSourceId.value;
   candidateBusy.value = true;
   historyError.value = "";
   try {
-    await request(
+    const result = await request<{ children: Candidate[] }>(
       "/api/v1/ingestions/" +
-        selectedJobId.value +
+        jobId +
         "/candidates/" +
-        selectedCandidateId.value +
+        candidateId +
         "/split",
       {
         method: "POST",
@@ -317,13 +410,21 @@ async function splitCandidate(payload: Record<string, unknown>) {
         body: JSON.stringify(payload),
       },
     );
-    await refreshCurrentJob();
+    const firstChild = result.children.find(
+      (candidate) => candidate.candidate_state === "pending_review" && !candidate.archived_at,
+    );
+    await refreshCurrentJob(
+      firstChild?.id ?? candidateId,
+      firstChild?.sources[0]?.question_source_id ?? null,
+      jobId,
+    );
   } catch (error) {
-    historyError.value =
-      error instanceof ApiError && error.status === 409
-        ? "候选内容已变化，请刷新后重试。"
-        : errorMessage(error);
-    if (error instanceof ApiError && error.status === 409) await refreshCurrentJob();
+    if (error instanceof ApiError && error.status === 409) {
+      await refreshCurrentJob(candidateId, sourceId, jobId);
+      historyError.value = "候选内容已变化，请刷新后重试。";
+    } else {
+      historyError.value = errorMessage(error);
+    }
   } finally {
     candidateBusy.value = false;
   }
@@ -333,25 +434,36 @@ async function candidateDisposition(
   action: "archive" | "confirm",
   payload: { expected_revision: number },
 ) {
-  if (selectedCandidateId.value === null) return;
+  if (selectedCandidateId.value === null || selectedJobId.value === null) return;
+  const jobId = selectedJobId.value;
+  const candidateId = selectedCandidateId.value;
+  const sourceId = selectedSourceId.value;
   candidateBusy.value = true;
   historyError.value = "";
   try {
     await request(
-      "/api/v1/ingestion-candidates/" + selectedCandidateId.value + "/" + action,
+      "/api/v1/ingestion-candidates/" + candidateId + "/" + action,
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       },
     );
-    await refreshCurrentJob();
+    await refreshCurrentJob(candidateId, sourceId, jobId);
   } catch (error) {
-    historyError.value =
-      error instanceof ApiError && error.status === 409
-        ? "候选内容已变化，请刷新后重试。"
-        : errorMessage(error);
-    if (error instanceof ApiError && error.status === 409) await refreshCurrentJob();
+    if (error instanceof ApiError && error.status === 409) {
+      await refreshCurrentJob(candidateId, sourceId, jobId);
+      historyError.value = "候选内容已变化，请刷新后重试。";
+    } else if (
+      action === "confirm" &&
+      error instanceof ApiError &&
+      error.status === 400 &&
+      (error.fields.topic_ids || error.fields.tag_ids)
+    ) {
+      historyError.value = "候选题关联的分类已停用或无效，请重新选择有效 Topic/Tag 后再确认。";
+    } else {
+      historyError.value = errorMessage(error);
+    }
   } finally {
     candidateBusy.value = false;
   }
@@ -359,7 +471,10 @@ async function candidateDisposition(
 
 async function mergeCandidates() {
   if (selectedJobId.value === null || selectedCandidate.value === null) return;
-  const participantIds = [...new Set([...selectedMergeIds.value, selectedCandidate.value.id])];
+  const jobId = selectedJobId.value;
+  const survivorId = selectedCandidate.value.id;
+  const sourceId = selectedSourceId.value;
+  const participantIds = [...new Set([...selectedMergeIds.value, survivorId])];
   if (participantIds.length < 2) {
     historyError.value = "请选择至少另一道同一任务中的待确认候选题。";
     return;
@@ -370,13 +485,13 @@ async function mergeCandidates() {
     const selectedCandidates = candidates.value.filter((candidate) =>
       participantIds.includes(candidate.id),
     );
-    await request(
-      "/api/v1/ingestions/" + selectedJobId.value + "/candidates/merge",
+    const result = await request<{ survivor: Candidate }>(
+      "/api/v1/ingestions/" + jobId + "/candidates/merge",
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          survivor_id: selectedCandidate.value.id,
+          survivor_id: survivorId,
           candidates: selectedCandidates.map((candidate) => ({
             id: candidate.id,
             expected_revision: candidate.candidate_revision,
@@ -385,13 +500,20 @@ async function mergeCandidates() {
         }),
       },
     );
-    await refreshCurrentJob();
+    await refreshCurrentJob(
+      result.survivor.id,
+      result.survivor.sources.some((source) => source.question_source_id === sourceId)
+        ? sourceId
+        : result.survivor.sources[0]?.question_source_id ?? null,
+      jobId,
+    );
   } catch (error) {
-    historyError.value =
-      error instanceof ApiError && error.status === 409
-        ? "候选内容已变化，请刷新后重试。"
-        : errorMessage(error);
-    if (error instanceof ApiError && error.status === 409) await refreshCurrentJob();
+    if (error instanceof ApiError && error.status === 409) {
+      await refreshCurrentJob(survivorId, sourceId, jobId);
+      historyError.value = "候选内容已变化，请刷新后重试。";
+    } else {
+      historyError.value = errorMessage(error);
+    }
   } finally {
     candidateBusy.value = false;
   }
@@ -452,7 +574,7 @@ onMounted(loadSources);
             <button
               type="button"
               :aria-label="'打开导入任务 ' + job.id"
-              @click="openJob(job.id)"
+              @click="openHistoricalJob(job.id)"
             >
               任务 {{ job.id }} · {{ job.status }} · {{ job.stage }} · 候选 {{ job.candidate_count }}
             </button>
@@ -488,6 +610,55 @@ onMounted(loadSources);
         ocrBlocks.map((block) => block.text).join("\n")
       }}</pre>
       <p v-else>没有识别到文字</p>
+      <section
+        v-if="selectedJob.status === 'succeeded' && selectedJob.stage === 'completed' && ocrBlocks.length"
+        aria-label="OCR 人工补建候选"
+      >
+        <button
+          v-if="!manualCreateOpen"
+          type="button"
+          aria-label="补建候选题"
+          @click="manualCreateOpen = true"
+        >
+          从 OCR 块补建候选题
+        </button>
+        <form
+          v-if="manualCreateOpen"
+          aria-label="从 OCR 块补建候选题"
+          @submit.prevent="createManualCandidate"
+        >
+          <p>选择一道未自动生成候选题的来源文字。OCR 块可被多个候选引用，补建不会修改已有候选或 OCR 证据。</p>
+          <ul aria-label="可选 OCR 块">
+            <li v-for="block in ocrBlocks" :key="block.id">
+              <label>
+                <input
+                  v-model="manualBlockIds"
+                  type="checkbox"
+                  :value="block.id"
+                  :disabled="!block.text.trim() || candidateBusy"
+                  :aria-label="'选择用于补建的 OCR 块 ' + block.id"
+                />
+                {{ block.reading_order + 1 }}. {{ block.text }}
+              </label>
+            </li>
+          </ul>
+          <pre v-if="selectedManualBlocks.length" aria-label="补建候选题 OCR 快照">{{ manualSourceText }}</pre>
+          <label>
+            最终题目正文（可修正；留空则使用所选 OCR 文本）
+            <textarea
+              v-model="manualCandidateText"
+              aria-label="补建候选题正文"
+              :placeholder="manualSourceText"
+            />
+          </label>
+          <button type="submit" :disabled="candidateBusy || manualBlockIds.length === 0">
+            创建待审核候选题
+          </button>
+          <button type="button" :disabled="candidateBusy" @click="manualCreateOpen = false">
+            取消
+          </button>
+        </form>
+      </section>
       <ul aria-label="候选题历史">
         <li v-for="candidate in candidates" :key="candidate.id">
           <input
@@ -506,6 +677,13 @@ onMounted(loadSources);
             {{ candidate.text }} · {{ candidate.candidate_state }}
           </button>
           <span> 来源区域 {{ candidate.sources.map((item) => item.question_source_id).join(", ") }} </span>
+          <span v-if="candidate.split_from_candidate_id">拆分自候选 #{{ candidate.split_from_candidate_id }}</span>
+          <span v-if="candidate.split_child_ids.length">
+            已拆分为候选 {{ candidate.split_child_ids.map((id) => "#" + id).join("、") }}
+          </span>
+          <span v-if="candidate.superseded_by_candidate_id">
+            已合并至候选 #{{ candidate.superseded_by_candidate_id }}
+          </span>
         </li>
       </ul>
       <p v-if="selectedCandidate && selectedCandidate.candidate_state !== 'pending_review'">
@@ -541,7 +719,15 @@ onMounted(loadSources);
         @confirm="candidateDisposition('confirm', $event)"
       />
       <SourceImageViewer
-        v-if="selectedCandidate"
+        v-if="manualCandidatePreview && selectedJob"
+        :sources="[]"
+        :selected-source-id="null"
+        :image-width="selectedJob.source.display_width"
+        :image-height="selectedJob.source.display_height"
+        :preview="manualCandidatePreview"
+      />
+      <SourceImageViewer
+        v-else-if="selectedCandidate"
         :sources="selectedCandidateSources"
         :selected-source-id="selectedSourceId"
         :image-width="selectedSourceAsset?.display_width ?? 0"
