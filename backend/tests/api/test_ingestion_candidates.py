@@ -5,6 +5,7 @@ import threading
 from uuid import uuid4
 
 from PIL import Image
+import pytest
 from sqlalchemy import event, select
 from sqlalchemy.orm import Session
 
@@ -16,6 +17,8 @@ from app.models.ingestion import (
 )
 from app.models.question import Question, QuestionState
 from app.models.question import QuestionTag, QuestionTopic
+from app.ocr.adapter import OCRDetection
+from app.services.candidate_builder import build_candidate_groups
 
 
 def _png_bytes():
@@ -234,6 +237,89 @@ def test_candidate_patch_uses_expected_revision_and_increments_it(client, app):
     assert response.get_json()["candidate_revision"] == fixture["revision"] + 1
     assert stale.status_code == 409
     assert stale.get_json()["error"]["code"] == "CONFLICT"
+
+
+def test_candidate_patch_can_edit_text_without_revalidating_unchanged_inactive_taxonomy(
+    client, app
+):
+    fixture = _candidate_fixture(client, app)
+    topic_id = _create_topic(client)
+    tag_id = client.post("/api/v1/tags", json={"name": "Inactive Candidate Tag"}).get_json()["id"]
+    with app.extensions["sqlalchemy_session_factory"].begin() as session:
+        session.add(QuestionTopic(question_id=fixture["candidate_id"], topic_id=topic_id))
+        session.add(QuestionTag(question_id=fixture["candidate_id"], tag_id=tag_id))
+    assert client.patch(f"/api/v1/topics/{topic_id}", json={"is_active": False}).status_code == 200
+    assert client.patch(f"/api/v1/tags/{tag_id}", json={"is_active": False}).status_code == 200
+
+    response = client.patch(
+        f"/api/v1/ingestion-candidates/{fixture['candidate_id']}",
+        json={
+            "expected_revision": 0,
+            "text": "Updated body only",
+            "topic_ids": [topic_id],
+            "tag_ids": [tag_id],
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.get_json()["candidate_revision"] == 1
+    with app.extensions["sqlalchemy_session_factory"]() as session:
+        candidate = session.get(Question, fixture["candidate_id"])
+        assert candidate.text == "Updated body only"
+        assert [link.topic_id for link in candidate.topic_links] == [topic_id]
+        assert [link.tag_id for link in candidate.tag_links] == [tag_id]
+
+
+def test_candidate_noop_patch_does_not_increment_revision(client, app):
+    fixture = _candidate_fixture(client, app)
+    with app.extensions["sqlalchemy_session_factory"]() as session:
+        source = session.get(QuestionSource, fixture["source_id"])
+        locator = dict(source.locator_json)
+
+    response = client.patch(
+        f"/api/v1/ingestion-candidates/{fixture['candidate_id']}",
+        json={
+            "expected_revision": 0,
+            "topic_ids": [],
+            "tag_ids": [],
+            "source_locator_corrections": [
+                {
+                    "question_source_id": fixture["source_id"],
+                    "locator_correction_json": locator,
+                }
+            ],
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.get_json()["candidate_revision"] == 0
+
+
+def test_candidate_patch_rejects_new_inactive_topic_and_tag(client, app):
+    fixture = _candidate_fixture(client, app)
+    topic_id = _create_topic(client)
+    tag_id = client.post("/api/v1/tags", json={"name": "New Inactive Tag"}).get_json()["id"]
+    client.patch(f"/api/v1/topics/{topic_id}", json={"is_active": False})
+    client.patch(f"/api/v1/tags/{tag_id}", json={"is_active": False})
+
+    topic_response = client.patch(
+        f"/api/v1/ingestion-candidates/{fixture['candidate_id']}",
+        json={"expected_revision": 0, "topic_ids": [topic_id]},
+    )
+    tag_response = client.patch(
+        f"/api/v1/ingestion-candidates/{fixture['candidate_id']}",
+        json={"expected_revision": 0, "tag_ids": [tag_id]},
+    )
+
+    assert topic_response.status_code == 400
+    assert "topic_ids" in topic_response.get_json()["error"]["fields"]
+    assert tag_response.status_code == 400
+    assert "tag_ids" in tag_response.get_json()["error"]["fields"]
+    with app.extensions["sqlalchemy_session_factory"]() as session:
+        candidate = session.get(Question, fixture["candidate_id"])
+        assert candidate.candidate_revision == 0
+        assert candidate.topic_links == []
+        assert candidate.tag_links == []
 
 
 def test_split_creates_parent_child_lineage(client, app):
@@ -956,3 +1042,222 @@ def test_confirm_uses_existing_search_and_practice(client, app):
     )
     assert practice.status_code == 201
     assert len(practice.get_json()["items"]) == 1
+
+
+def test_manual_candidate_create_reuses_job_ocr_blocks_without_changing_existing_evidence(
+    client, app
+):
+    fixture = _candidate_fixture(
+        client,
+        app,
+        text="Existing candidate",
+        block_texts=["Unnumbered Agent question", "Continuation text"],
+    )
+    with app.extensions["sqlalchemy_session_factory"]() as session:
+        original_source = session.get(QuestionSource, fixture["source_id"])
+        original_snapshot = (
+            original_source.source_text_snapshot,
+            original_source.raw_ocr_text_snapshot,
+            dict(original_source.locator_json),
+            original_source.question_id,
+        )
+
+    response = client.post(
+        f"/api/v1/ingestions/{fixture['job_id']}/candidates",
+        json={
+            "ocr_block_ids": fixture["block_ids"],
+            "text": "Corrected manually created candidate",
+        },
+    )
+
+    assert response.status_code == 201
+    candidate = response.get_json()
+    assert candidate["id"] != fixture["candidate_id"]
+    assert candidate["text"] == "Corrected manually created candidate"
+    assert candidate["origin_ingestion_job_id"] == fixture["job_id"]
+    assert candidate["status"] == "pending_review"
+    assert candidate["candidate_state"] == "pending_review"
+    assert candidate["candidate_revision"] == 0
+    source = candidate["sources"][0]
+    assert source["source_asset_id"] == fixture["source_asset_id"]
+    assert source["source_text_snapshot"] == "Unnumbered Agent question\nContinuation text"
+    assert source["raw_ocr_text_snapshot"] == source["source_text_snapshot"]
+    assert source["ocr_blocks"] and [block["id"] for block in source["ocr_blocks"]] == fixture["block_ids"]
+    assert source["locator_json"] == pytest.approx({
+        "x": 0.1,
+        "y": 0.1,
+        "width": 0.6,
+        "height": 0.2,
+    })
+
+    with app.extensions["sqlalchemy_session_factory"]() as session:
+        original_source = session.get(QuestionSource, fixture["source_id"])
+        assert (
+            original_source.source_text_snapshot,
+            original_source.raw_ocr_text_snapshot,
+            dict(original_source.locator_json),
+            original_source.question_id,
+        ) == original_snapshot
+        manual_source_id = source["question_source_id"]
+        assert manual_source_id != fixture["source_id"]
+        linked_block_ids = set(
+            session.scalars(
+                select(QuestionSourceOCRBlock.ocr_block_id).where(
+                    QuestionSourceOCRBlock.question_source_id == manual_source_id
+                )
+            )
+        )
+        assert linked_block_ids == set(fixture["block_ids"])
+
+    assert client.get("/api/v1/questions?q=Corrected+manually+created").get_json() == []
+    practice = client.post(
+        "/api/v1/practice-sessions",
+        json={"mode": "random", "filters": {}, "limit": 5},
+    )
+    assert practice.status_code == 201
+    assert practice.get_json()["items"] == []
+    confirmed = client.post(
+        f"/api/v1/ingestion-candidates/{candidate['id']}/confirm",
+        json={"expected_revision": 0},
+    )
+    assert confirmed.status_code == 200
+    assert [item["id"] for item in client.get(
+        "/api/v1/questions?q=Corrected+manually+created"
+    ).get_json()] == [candidate["id"]]
+
+
+def test_manual_candidate_create_requires_succeeded_job(client, app):
+    _, job_id = _create_job(client)
+
+    response = client.post(
+        f"/api/v1/ingestions/{job_id}/candidates",
+        json={"ocr_block_ids": [str(uuid4())]},
+    )
+
+    assert response.status_code == 409
+    assert response.get_json()["error"]["code"] == "CONFLICT"
+    with app.extensions["sqlalchemy_session_factory"]() as session:
+        assert session.query(Question).filter_by(origin_ingestion_job_id=job_id).count() == 0
+
+
+def test_manual_candidate_recovers_unlinked_leading_unnumbered_ocr_text(client, app):
+    source_id, job_id = _create_job(client)
+    leading_block_id = str(uuid4())
+    numbered_block_id = str(uuid4())
+    automatic_drafts = build_candidate_groups(
+        [
+            OCRDetection(
+                id=leading_block_id,
+                text="介绍一下你实际开发过的 Agent 项目。",
+                bbox=(0.1, 0.15, 0.8, 0.06),
+                confidence=0.9,
+                reading_order=0,
+            ),
+            OCRDetection(
+                id=numbered_block_id,
+                text="1. 什么是 ReAct？",
+                bbox=(0.1, 0.28, 0.5, 0.06),
+                confidence=0.9,
+                reading_order=1,
+            ),
+        ]
+    )
+    assert len(automatic_drafts) == 1
+    assert leading_block_id not in automatic_drafts[0].ocr_block_ids
+    with app.extensions["sqlalchemy_session_factory"].begin() as session:
+        job = session.get(IngestionJob, job_id)
+        job.status = "succeeded"
+        job.stage = "completed"
+        session.add_all(
+            [
+                OCRBlock(
+                    id=leading_block_id,
+                    ingestion_job_id=job_id,
+                    text="介绍一下你实际开发过的 Agent 项目。",
+                    bbox_json={"x": 0.1, "y": 0.15, "width": 0.8, "height": 0.06},
+                    reading_order=0,
+                ),
+                OCRBlock(
+                    id=numbered_block_id,
+                    ingestion_job_id=job_id,
+                    text="1. 什么是 ReAct？",
+                    bbox_json={"x": 0.1, "y": 0.28, "width": 0.5, "height": 0.06},
+                    reading_order=1,
+                ),
+            ]
+        )
+
+    response = client.post(
+        f"/api/v1/ingestions/{job_id}/candidates",
+        json={"ocr_block_ids": [leading_block_id]},
+    )
+
+    assert response.status_code == 201
+    candidate = response.get_json()
+    assert candidate["text"] == "介绍一下你实际开发过的 Agent 项目。"
+    assert candidate["origin_ingestion_job_id"] == job_id
+    assert candidate["sources"][0]["source_asset_id"] == source_id
+    assert candidate["sources"][0]["source_text_snapshot"] == "介绍一下你实际开发过的 Agent 项目。"
+    assert [block["id"] for block in candidate["sources"][0]["ocr_blocks"]] == [leading_block_id]
+
+
+def test_manual_candidate_create_rejects_cross_job_blocks_atomically(client, app):
+    fixture_a = _candidate_fixture(client, app, text="Candidate A")
+    fixture_b = _candidate_fixture(client, app, text="Candidate B")
+
+    response = client.post(
+        f"/api/v1/ingestions/{fixture_a['job_id']}/candidates",
+        json={"ocr_block_ids": fixture_b["block_ids"]},
+    )
+
+    assert response.status_code == 400
+    assert response.get_json()["error"]["code"] == "VALIDATION_ERROR"
+    with app.extensions["sqlalchemy_session_factory"]() as session:
+        assert (
+            session.query(Question)
+            .filter_by(origin_ingestion_job_id=fixture_a["job_id"])
+            .count()
+            == 1
+        )
+        assert session.query(QuestionSource).count() == 2
+
+
+def test_split_keeps_corrected_question_text_separate_from_ocr_snapshot(client, app):
+    fixture = _candidate_fixture(
+        client,
+        app,
+        text="LangGrapn state question",
+        block_texts=["LangGrapn state question"],
+    )
+
+    response = client.post(
+        f"/api/v1/ingestions/{fixture['job_id']}/candidates/"
+        f"{fixture['candidate_id']}/split",
+        json={
+            "expected_revision": 0,
+            "parts": [
+                {
+                    "text": "LangGraph state",
+                    "ocr_block_ids": fixture["block_ids"],
+                    "source_text_snapshot": "LangGrapn state",
+                },
+                {
+                    "text": "What does the question ask?",
+                    "ocr_block_ids": fixture["block_ids"],
+                    "source_text_snapshot": "question",
+                },
+            ],
+        },
+    )
+
+    assert response.status_code == 200
+    children = response.get_json()["children"]
+    assert [child["text"] for child in children] == [
+        "LangGraph state",
+        "What does the question ask?",
+    ]
+    assert [child["sources"][0]["source_text_snapshot"] for child in children] == [
+        "LangGrapn state",
+        "question",
+    ]
+    assert all(child["sources"][0]["raw_ocr_text_snapshot"] == "LangGrapn state question" for child in children)

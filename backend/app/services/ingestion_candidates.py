@@ -184,6 +184,106 @@ def _source_row_for_candidate(
     return source
 
 
+def _selection_matches_current(value: object, current_ids: set[int]) -> bool:
+    if not isinstance(value, list):
+        return False
+    if any(isinstance(item, bool) or not isinstance(item, int) or item <= 0 for item in value):
+        return False
+    return len(value) == len(set(value)) and set(value) == current_ids
+
+
+def create_candidate_from_ocr_blocks(
+    session: Session,
+    job_id: int,
+    payload: object,
+) -> Question:
+    if not isinstance(payload, dict):
+        raise _validation("body", "Expected a JSON object")
+    allowed = {"ocr_block_ids", "text"}
+    unknown = set(payload) - allowed
+    if unknown:
+        raise _validation("body", f"Unsupported fields: {', '.join(sorted(unknown))}")
+    block_ids = payload.get("ocr_block_ids")
+    if (
+        not isinstance(block_ids, list)
+        or not block_ids
+        or any(not isinstance(block_id, str) for block_id in block_ids)
+        or len(set(block_ids)) != len(block_ids)
+    ):
+        raise _validation("ocr_block_ids", "Must be a non-empty list of unique OCR block IDs")
+
+    with session.begin():
+        job = session.get(IngestionJob, job_id)
+        if job is None:
+            raise ApiError(404, "NOT_FOUND", "Ingestion job not found")
+        if job.status != "succeeded" or job.stage != "completed":
+            raise ApiError(409, "CONFLICT", "Candidates can only be added to a completed OCR job")
+
+        blocks = list(
+            session.scalars(
+                select(OCRBlock)
+                .where(
+                    OCRBlock.ingestion_job_id == job_id,
+                    OCRBlock.id.in_(block_ids),
+                )
+                .order_by(OCRBlock.reading_order, OCRBlock.id)
+            )
+        )
+        if len(blocks) != len(block_ids):
+            raise _validation("ocr_block_ids", "Every OCR block must belong to this ingestion job")
+        source_text = "\n".join(block.text for block in blocks)
+        prepared_text = prepare_question_text(payload.get("text", source_text))
+
+        boxes = [block.bbox_json for block in blocks]
+        left = min(box["x"] for box in boxes)
+        top = min(box["y"] for box in boxes)
+        right = max(box["x"] + box["width"] for box in boxes)
+        bottom = max(box["y"] + box["height"] for box in boxes)
+        confidences = [block.confidence for block in blocks if block.confidence is not None]
+        question = Question(
+            text=prepared_text[0],
+            normalized_text=prepared_text[1],
+            search_text=prepared_text[1],
+            normalized_hash=prepared_text[2],
+            status="pending_review",
+            origin_ingestion_job_id=job_id,
+            ingestion_candidate_state="pending_review",
+            candidate_revision=0,
+        )
+        session.add(question)
+        session.flush()
+
+        source = QuestionSource(
+            question_id=question.id,
+            source_asset_id=job.source_asset_id,
+            locator_type="image_region",
+            locator_json={
+                "x": left,
+                "y": top,
+                "width": right - left,
+                "height": bottom - top,
+            },
+            source_text_snapshot=source_text,
+            raw_ocr_text_snapshot=source_text,
+            confidence=sum(confidences) / len(confidences) if confidences else None,
+        )
+        session.add(source)
+        session.flush()
+        session.add_all(
+            [
+                QuestionSourceOCRBlock(
+                    question_source_id=source.id,
+                    ocr_block_id=block.id,
+                )
+                for block in blocks
+            ]
+        )
+        session.flush()
+        candidate_id = question.id
+
+    return question_repository.get_question(session, candidate_id)
+
+
 def patch_ingestion_candidate(
     session: Session,
     candidate_id: int,
@@ -215,6 +315,7 @@ def patch_ingestion_candidate(
         sources = _get_candidate_sources(session, candidate, job)
 
         parsed_corrections: list[tuple[QuestionSource, dict | None]] = []
+        correction_source_ids: set[int] = set()
         for index, correction in enumerate(corrections):
             if not isinstance(correction, dict) or set(correction) != {
                 "question_source_id",
@@ -225,6 +326,12 @@ def patch_ingestion_candidate(
                     "Expected question_source_id and locator_correction_json",
                 )
             source = _source_row_for_candidate(sources, correction["question_source_id"])
+            if source.id in correction_source_ids:
+                raise _validation(
+                    f"source_locator_corrections[{index}].question_source_id",
+                    "QuestionSource may be corrected only once per request",
+                )
+            correction_source_ids.add(source.id)
             locator = _parse_locator(
                 correction["locator_correction_json"],
                 f"source_locator_corrections[{index}].locator_correction_json",
@@ -234,14 +341,37 @@ def patch_ingestion_candidate(
         topics = None
         tags = None
         if "topic_ids" in payload:
-            topics = validate_active_topic_ids(session, payload["topic_ids"])
+            current_topic_ids = {link.topic_id for link in candidate.topic_links}
+            if not _selection_matches_current(payload["topic_ids"], current_topic_ids):
+                topics = validate_active_topic_ids(session, payload["topic_ids"])
+                if {topic.id for topic in topics} == current_topic_ids:
+                    topics = None
         if "tag_ids" in payload:
-            tags = validate_active_tag_ids(session, payload["tag_ids"])
+            current_tag_ids = {link.tag_id for link in candidate.tag_links}
+            if not _selection_matches_current(payload["tag_ids"], current_tag_ids):
+                tags = validate_active_tag_ids(session, payload["tag_ids"])
+                if {tag.id for tag in tags} == current_tag_ids:
+                    tags = None
         prepared_text = None
         if "text" in payload:
             prepared_text = prepare_question_text(payload["text"])
+            current_text = (
+                candidate.text,
+                candidate.normalized_text,
+                candidate.normalized_hash,
+            )
+            if prepared_text == current_text and candidate.search_text == prepared_text[1]:
+                prepared_text = None
+        parsed_corrections = [
+            (source, locator)
+            for source, locator in parsed_corrections
+            if locator != source.locator_correction_json
+            and not (source.locator_correction_json is None and locator == source.locator_json)
+        ]
 
-        job_id = candidate.origin_ingestion_job_id
+        if prepared_text is None and topics is None and tags is None and not parsed_corrections:
+            return question_repository.get_question(session, candidate_id)
+
         _advance_candidate(session, candidate, expected_revision)
         candidate = session.get(Question, candidate_id)
         if prepared_text is not None:
