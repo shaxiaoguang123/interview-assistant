@@ -31,5 +31,6 @@ class Config:
     APP_DATA_DIR = default_data_dir()
     DATABASE_URL = default_database_url()
     ALLOWED_ORIGINS = allowed_origins_from_environment()
+    FRONTEND_DIST_DIR = Path(__file__).resolve().parents[2] / "frontend" / "dist"
     SEED_TOPICS_ON_STARTUP = True
     MAX_CONTENT_LENGTH = 2 * 1024 * 1024

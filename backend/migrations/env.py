@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
 from logging.config import fileConfig
 
 from alembic import context
 from sqlalchemy import engine_from_config, pool
+from sqlalchemy.engine import make_url
 
 from app.config import default_database_url
 from app.db import Base
@@ -21,6 +23,14 @@ config.set_main_option("sqlalchemy.url", database_url.replace("%", "%%"))
 target_metadata = Base.metadata
 
 
+def ensure_sqlite_parent_directory(url: str) -> None:
+    parsed_url = make_url(url)
+    database_path = parsed_url.database
+    if parsed_url.get_backend_name() != "sqlite" or database_path in (None, ":memory:"):
+        return
+    Path(database_path).expanduser().resolve().parent.mkdir(parents=True, exist_ok=True)
+
+
 def run_migrations_offline() -> None:
     context.configure(
         url=database_url,
@@ -34,6 +44,7 @@ def run_migrations_offline() -> None:
 
 
 def run_migrations_online() -> None:
+    ensure_sqlite_parent_directory(database_url)
     connectable = engine_from_config(
         config.get_section(config.config_ini_section, {}),
         prefix="sqlalchemy.",

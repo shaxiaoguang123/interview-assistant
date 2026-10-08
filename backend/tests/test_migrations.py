@@ -49,6 +49,21 @@ def test_alembic_upgrades_empty_database_to_head(tmp_path):
     } <= tables
 
 
+def test_alembic_creates_default_app_data_directory(tmp_path, monkeypatch):
+    app_data_dir = tmp_path / "new-user-data" / "agent-assistant"
+    monkeypatch.setenv("APP_DATA_DIR", str(app_data_dir))
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    alembic_ini = BACKEND_ROOT / "alembic.ini"
+    config = Config(str(alembic_ini))
+
+    try:
+        command.upgrade(config, "head")
+    except Exception as error:
+        pytest.fail(f"Alembic must create the configured SQLite parent directory: {error}")
+
+    assert (app_data_dir / "interview_assistant.sqlite3").is_file()
+
+
 def test_test_database_is_outside_real_data_directory(tmp_path):
     real_data_dir = default_data_dir().resolve()
     test_database_path = tmp_path / "isolated.sqlite3"
