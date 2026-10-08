@@ -288,6 +288,7 @@ README.md                       # Conda test、Alembic、前后端本机启动�
 - Modify: `backend/app/services/practice_session.py`
 - Modify: `backend/app/api/v1/practice_sessions.py`
 - Modify: `frontend/src/pages/PracticeSessionPage.vue`
+- Modify: `frontend/src/pages/QuestionDetailPage.vue`
 - Modify: `frontend/tests/practice-session.spec.ts`
 
 **Interfaces:**
@@ -303,8 +304,8 @@ README.md                       # Conda test、Alembic、前后端本机启动�
 - [ ] **Step 2: Run RED.** Activate `test`, then `(cd backend && pytest tests/api/test_practice_reviews.py tests/services/test_practice_review.py -q)`; confirm endpoints and atomic lifecycle are missing.
 - [ ] **Step 3: Implement `record_practice_review` using one `Session.begin()` transaction.** Validate before writes; rely on the unique SessionItem constraint for duplicate races; map `IntegrityError` to 409 `CONFLICT`; update Session completion in the same transaction after flush; let exceptions roll back item, Review, and Session together.
 - [ ] **Step 4: Implement PATCH and history routes.** Reject extra immutable fields with 400; return 404 for an unknown Review; preserve `created_at`, `reviewed_at`, `question_id`, and `session_item_id`; update `updated_at`; do not create another Review or scheduling state.
-- [ ] **Step 5: Write frontend test** `completion_requires_user_selected_rating_and_sends_review_only`; run `npm --prefix frontend test -- tests/practice-session.spec.ts` and confirm RED.
-- [ ] **Step 6: Add four rating choices and the question review history panel.** A click submits only the review request; no answer save call exists.
+- [ ] **Step 5: Write frontend tests** `completion_requires_user_selected_rating_and_sends_review_only` and `review_history_corrects_rating_without_new_review`; run `npm --prefix frontend test -- tests/practice-session.spec.ts` and confirm RED.
+- [ ] **Step 6: Add four rating choices and the question review history/correction panel.** A click submits only the review request; no answer save call exists. Editing a historical rating sends PATCH and refreshes the same Review row.
 - [ ] **Step 7: Run focused tests and the complete backend/frontend suites** (`(cd backend && pytest -q)` and `npm --prefix frontend test`); confirm creation, rollback, terminal transitions, PATCH, and history pass.
 - [ ] **Step 8: Commit** as `feat: add atomic practice review lifecycle`.
 
