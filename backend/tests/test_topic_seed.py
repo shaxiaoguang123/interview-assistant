@@ -77,3 +77,21 @@ def test_initial_topic_seed_is_idempotent_across_app_restarts(tmp_path):
         "python-backend",
         "project-practice",
     } <= all_slugs
+
+
+def test_topic_seed_loads_existing_rows_through_taxonomy_repository(db_session, monkeypatch):
+    from app.repositories import taxonomy as taxonomy_repository
+    from app.services import topic_seed
+
+    original_list_topics = taxonomy_repository.list_topics
+    calls = []
+
+    def tracked_list_topics(session):
+        calls.append(session)
+        return original_list_topics(session)
+
+    monkeypatch.setattr(taxonomy_repository, "list_topics", tracked_list_topics)
+
+    topic_seed.seed_initial_topics(db_session)
+
+    assert calls == [db_session]

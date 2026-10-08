@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 
-from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -33,7 +32,10 @@ def _validate_active_ids(
     if not ordered_ids:
         return []
 
-    rows = list(session.scalars(select(model).where(model.id.in_(ordered_ids))).all())
+    if model is Topic:
+        rows = taxonomy_repository.get_topics_by_ids(session, ordered_ids)
+    else:
+        rows = taxonomy_repository.get_tags_by_ids(session, ordered_ids)
     by_id = {row.id: row for row in rows}
     missing = [value for value in ordered_ids if value not in by_id]
     inactive = [value for value in ordered_ids if value in by_id and not by_id[value].is_active]
@@ -123,7 +125,9 @@ def create_topic(session: Session, payload: dict) -> Topic:
 def update_topic(session: Session, topic_id: int, payload: dict) -> Topic:
     if not isinstance(payload, dict) or not payload:
         raise ApiError(400, "VALIDATION_ERROR", "Invalid Topic update", {"body": "Expected a non-empty JSON object"})
-    allowed = {"slug", "name", "parent_id", "sort_order", "is_active"}
+    if "slug" in payload:
+        raise ApiError(400, "VALIDATION_ERROR", "Topic slug cannot be changed", {"slug": "Immutable after creation"})
+    allowed = {"name", "parent_id", "sort_order", "is_active"}
     unknown = set(payload) - allowed
     if unknown:
         raise ApiError(400, "VALIDATION_ERROR", "Invalid Topic update", {"body": f"Unsupported fields: {', '.join(sorted(unknown))}"})
@@ -132,11 +136,6 @@ def update_topic(session: Session, topic_id: int, payload: dict) -> Topic:
             topic = taxonomy_repository.get_topic(session, topic_id)
             if topic is None:
                 raise ApiError(404, "NOT_FOUND", "Topic not found")
-            if "slug" in payload:
-                slug = _required_text(payload, "slug")
-                if taxonomy_repository.topic_slug_exists(session, slug, excluding_id=topic_id):
-                    raise ApiError(409, "CONFLICT", "Topic slug already exists", {"slug": "Already in use"})
-                topic.slug = slug
             if "name" in payload:
                 topic.name = _required_text(payload, "name")
             if "parent_id" in payload:

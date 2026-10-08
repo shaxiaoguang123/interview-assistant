@@ -2,10 +2,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models.taxonomy import Topic
+from app.repositories import taxonomy as taxonomy_repository
 
 
 @dataclass(frozen=True)
@@ -53,7 +53,7 @@ INITIAL_TOPICS = (
 
 
 def seed_initial_topics(session: Session) -> None:
-    existing = {topic.slug: topic for topic in session.scalars(select(Topic)).all()}
+    existing = {topic.slug: topic for topic in taxonomy_repository.list_topics(session)}
     for entry in INITIAL_TOPICS:
         if entry.slug in existing:
             continue

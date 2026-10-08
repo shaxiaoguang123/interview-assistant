@@ -128,6 +128,7 @@ README.md                       # Conda test、Alembic、前后端本机启动�
 - Create: `backend/app/models/question.py`
 - Create: `backend/app/models/practice.py`
 - Create: `backend/app/services/topic_seed.py`
+- Create: `backend/app/repositories/taxonomy.py`
 - Create: `backend/alembic.ini`
 - Create: `backend/migrations/env.py`
 - Create: `backend/migrations/versions/0001_phase1a_core.py`
@@ -151,37 +152,39 @@ README.md                       # Conda test、Alembic、前后端本机启动�
 - `SessionItem.status` is constrained to `shown|completed|skipped`; `completed` and `skipped` are terminal. `PracticeReview.session_item_id` has a unique constraint.
 - `PracticeReview` stores immutable `question_id`, `session_item_id`, `review_rating`, `reviewed_at`, `created_at`, and mutable `updated_at`.
 - SQLite engine connect event runs `PRAGMA foreign_keys=ON` for every connection.
-- `alembic.ini`/`migrations/env.py` read the configured `DATABASE_URL`; Alembic upgrades an empty test database without invoking `create_all()`.
+- `migrations/env.py` uses an explicitly configured Alembic `sqlalchemy.url` first (including test `tmp_path` URLs); when blank, it falls back to `DATABASE_URL` and then the default local data path. Alembic upgrades an empty test database without invoking `create_all()`.
 - After Alembic upgrade, normal app startup idempotently seeds Topics by stable unique `slug`; insert missing rows only and never overwrite user edits. Health-only tests set `SEED_TOPICS_ON_STARTUP=False` because they intentionally have no business schema.
 
-- [ ] **Step 1: Write failing tests** `test_alembic_upgrades_empty_database_to_head`, `test_test_database_is_outside_real_data_directory`, `test_sqlite_foreign_keys_are_enabled`, `test_sqlite_rejects_foreign_key_violation`, `test_duplicate_normalized_hash_is_allowed`, `test_normalized_hash_index_is_not_unique`, and `test_initial_topic_seed_is_idempotent_across_app_restarts`.
-- [ ] **Step 2: Run RED.** Activate `test`, then `(cd backend && pytest tests/test_migrations.py tests/test_models.py tests/test_topic_seed.py -q)`; confirm missing models/revisions/seed behavior fail.
+- [ ] **Step 1: Write failing tests** `test_alembic_upgrades_empty_database_to_head`, `test_alembic_explicit_test_url_overrides_environment_database_url`, `test_test_database_is_outside_real_data_directory`, `test_sqlite_foreign_keys_are_enabled`, `test_sqlite_rejects_foreign_key_violation`, `test_duplicate_normalized_hash_is_allowed`, `test_normalized_hash_index_is_not_unique`, `test_initial_topic_seed_is_idempotent_across_app_restarts`, and `test_topic_seed_loads_existing_rows_through_taxonomy_repository`.
+- [ ] **Step 2: Run RED.** Activate `test`, then `(cd backend && pytest tests/test_migrations.py tests/test_models.py tests/test_topic_seed.py -q)`; confirm missing schema, explicit test URL precedence, and repository-backed seed behavior fail.
 - [ ] **Step 3: Implement SQLAlchemy models and `db.py` engine/session setup.** Keep Phase 1A QuestionState to `is_favorite`, `is_wrong`, and `user_note`; do not implement `next_review_at` scheduling fields/logic in this phase. Set `SEED_TOPICS_ON_STARTUP=True` after migrations are installed; `create_app` test configs can disable it before the schema exists.
 - [ ] **Step 4: Create Alembic `env.py` and the initial revision.** `config.py` exposes the same `DATABASE_URL` resolver to Flask and Alembic; tests override the Alembic URL to a fresh `tmp_path`. The revision creates the listed models, foreign keys, status checks, unique `slug`, unique `SessionItem` Review, ordinary `normalized_hash` index, and other lookup indexes. It must not add `UNIQUE(normalized_hash)`.
-- [ ] **Step 5: Implement the idempotent Agent topic seed.** Seed the editable tree: LLM basics, Prompt, Structured Output, Context Engineering, Function Calling/Tool Use, MCP, RAG, Memory, LangChain, LangGraph, Multi-Agent, Agent Design Patterns (ReAct, Plan-and-Execute, Reflection, Router, Supervisor, Workflow vs Agent, Human-in-the-loop), Agent Evaluation, Observability, Agent Security, deployment, Python/backend, and project practice. Use stable slugs and preserve changed names on later starts.
+- [ ] **Step 5: Implement the focused `list_topics` repository query and idempotent Agent topic seed.** The seed reads through the repository, inserts only missing stable slugs, and preserves user edits. Seed the editable tree: LLM basics, Prompt, Structured Output, Context Engineering, Function Calling/Tool Use, MCP, RAG, Memory, LangChain, LangGraph, Multi-Agent, Agent Design Patterns (ReAct, Plan-and-Execute, Reflection, Router, Supervisor, Workflow vs Agent, Human-in-the-loop), Agent Evaluation, Observability, Agent Security, deployment, Python/backend, and project practice.
 - [ ] **Step 6: Run focused migration/model/seed tests and the complete backend/frontend suites** (`(cd backend && pytest -q)` and `npm --prefix frontend test`) against fresh `tmp_path` databases; verify Alembic upgrade from empty, FK violation rejection, duplicate hash acceptance, and repeated app creation without duplicate Topic rows.
 - [ ] **Step 7: Commit** as `feat: add SQLAlchemy models and Alembic core schema`.
 
 ## Task 3: Editable Topics and Tags
 
 **Files:**
-- Create: `backend/app/repositories/taxonomy.py`
+- Modify: `backend/app/repositories/taxonomy.py`
 - Create: `backend/app/services/taxonomy.py`
 - Create: `backend/app/api/v1/topics.py`
 - Create: `backend/app/api/v1/tags.py`
 - Create: `backend/tests/api/test_topics.py`
 - Create: `backend/tests/api/test_tags.py`
+- Create: `backend/tests/test_taxonomy_repository.py`
 - Create: `frontend/src/pages/TaxonomyPage.vue`
 - Create: `frontend/tests/taxonomy.spec.ts`
 - Modify: `frontend/src/router/index.ts`
 
 **Interfaces:**
 - `GET/POST/PATCH /api/v1/topics` and `GET/POST/PATCH /api/v1/tags`; request failures reuse Task 1 error envelope.
+- `Topic.slug` is an immutable seed identity after creation; users can edit the name, parent, sort order, and active state without causing startup seeding to recreate a renamed Topic.
 - `validate_active_topic_ids(session, ids) -> list[Topic]` and `validate_active_tag_ids(session, ids) -> list[Tag]` reject unknown or inactive IDs with 400 `VALIDATION_ERROR` and `error.fields` (the single standard validation code).
 - Deactivation only sets `is_active=false`; it never deletes QuestionTopic/QuestionTag links. Existing detail views display inactive links with an inactive marker.
 
-- [ ] **Step 1: Write failing tests** `test_topic_crud_and_reparent`, `test_topic_parent_cycle_is_rejected`, `test_tag_crud`, `test_deactivating_topic_preserves_existing_question_links`, `test_deactivating_tag_preserves_existing_question_links`, and service tests for unknown/inactive ID validation.
-- [ ] **Step 2: Run RED.** Activate `test`, then `(cd backend && pytest tests/api/test_topics.py tests/api/test_tags.py -q)`; confirm expected routes/services are absent.
+- [ ] **Step 1: Write failing tests** `test_topic_crud_and_reparent`, `test_topic_parent_cycle_is_rejected`, `test_topic_slug_is_immutable`, `test_tag_crud`, `test_deactivating_topic_preserves_existing_question_links`, `test_deactivating_tag_preserves_existing_question_links`, `test_load_taxonomy_by_ids_preserves_requested_order`, and service tests for unknown/inactive ID validation.
+- [ ] **Step 2: Run RED.** Activate `test`, then `(cd backend && pytest tests/api/test_topics.py tests/api/test_tags.py tests/test_taxonomy_repository.py -q)`; confirm expected routes/services and ID-based repository lookups are absent.
 - [ ] **Step 3: Implement focused SQLAlchemy repositories and taxonomy services.** Validate parent existence and prevent cycles; use transactions; preserve linked Question taxonomy rows when deactivated.
 - [ ] **Step 4: Write frontend test** `renders_taxonomy_and_marks_inactive_entries`; run `npm --prefix frontend test -- tests/taxonomy.spec.ts` and confirm it fails before the page exists.
 - [ ] **Step 5: Implement the minimal taxonomy management page.** Run focused tests plus the complete backend/frontend suites (`(cd backend && pytest -q)` and `npm --prefix frontend test`); verify inactive entries remain visible and marked.
@@ -373,9 +376,11 @@ The acceptance path is: open the local app → manage Agent topics → manually 
 
 - **Phase scope:** tasks cover only Phase 0/1A; all future systems are explicitly excluded.
 - **Database consistency:** SQLAlchemy 2.x models + Alembic only; no `sqlite3` repositories or custom migration runner. FTS-specific SQL is confined to Alembic revisions.
+- **Alembic URL isolation:** explicit per-run URLs take precedence over environment configuration, preserving temporary test-database isolation while retaining `DATABASE_URL` fallback for local runs.
 - **Archive semantics:** `status` and `archived_at` are independent; default active queries exclude archives, while old sessions/history load by stored IDs without active filters.
 - **Transactions:** skip and review transitions each use one SQLAlchemy transaction; review insert and item/session updates roll back together.
 - **Taxonomy validation:** missing/inactive IDs return 400 with field errors in Question and selector flows; deactivation preserves old links.
+- **Repository boundary and seeding:** taxonomy lookups and seed reads use focused repository functions; Topic slugs stay stable so restart seeding remains idempotent.
 - **Review correction:** PATCH `review_rating` is explicitly tested; event identity and original time fields remain immutable.
 - **Hash uniqueness:** ordinary index only, with a migration test proving duplicate normalized hashes are accepted.
 - **Errors/security:** one response envelope starts in Task 1; absent Origin is accepted; configured local Origin and all three loopback hosts are supported.

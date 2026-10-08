@@ -64,6 +64,25 @@ def test_alembic_creates_default_app_data_directory(tmp_path, monkeypatch):
     assert (app_data_dir / "interview_assistant.sqlite3").is_file()
 
 
+def test_alembic_explicit_test_url_overrides_environment_database_url(tmp_path, monkeypatch):
+    configured_test_path = tmp_path / "configured-test" / "test.sqlite3"
+    environment_path = tmp_path / "environment-db.sqlite3"
+    configured_url = URL.create("sqlite", database=str(configured_test_path)).render_as_string(
+        hide_password=False
+    )
+    environment_url = URL.create("sqlite", database=str(environment_path)).render_as_string(
+        hide_password=False
+    )
+    monkeypatch.setenv("DATABASE_URL", environment_url)
+    alembic_config = Config(str(BACKEND_ROOT / "alembic.ini"))
+    alembic_config.set_main_option("sqlalchemy.url", configured_url)
+
+    command.upgrade(alembic_config, "head")
+
+    assert configured_test_path.is_file()
+    assert not environment_path.exists()
+
+
 def test_test_database_is_outside_real_data_directory(tmp_path):
     real_data_dir = default_data_dir().resolve()
     test_database_path = tmp_path / "isolated.sqlite3"

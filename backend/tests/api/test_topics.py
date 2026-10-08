@@ -41,6 +41,19 @@ def test_topic_crud_and_reparent(client):
     assert any(topic["slug"] == "prompt" for topic in listing)
 
 
+def test_topic_slug_is_immutable(client):
+    created = client.post("/api/v1/topics", json={"slug": "stable-topic", "name": "Stable"})
+    topic = created.get_json()
+
+    response = client.patch(f"/api/v1/topics/{topic['id']}", json={"slug": "renamed-topic"})
+
+    assert response.status_code == 400
+    assert response.get_json()["error"]["code"] == "VALIDATION_ERROR"
+    assert "slug" in response.get_json()["error"]["fields"]
+    unchanged = client.get("/api/v1/topics").get_json()
+    assert next(item for item in unchanged if item["id"] == topic["id"])["slug"] == "stable-topic"
+
+
 def test_topic_parent_cycle_is_rejected(client):
     first_response = client.post("/api/v1/topics", json={"slug": "first", "name": "First"})
     assert first_response.status_code == 201
