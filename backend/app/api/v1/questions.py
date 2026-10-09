@@ -5,6 +5,9 @@ from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
 from app.db import get_session
+from app.repositories import questions as question_repository
+from app.services.question_history import get_canonical_history
+from .serializers import source_json, review_json, session_item_json
 from app.services.question_relations import (
     get_similar_candidates,
     review_question_relation,
@@ -28,7 +31,7 @@ from app.services.question_merge import merge_question, preview_question_merge
 blueprint = Blueprint("questions_v1", __name__, url_prefix="/api/v1")
 
 
-def _question_json(question):
+def _question_json(question, flags=None):
     state = question.state
     topics = [
         {
@@ -62,11 +65,18 @@ def _question_json(question):
         "topics": topics,
         "tags": tags,
         "state": {
-            "is_favorite": state.is_favorite if state else False,
-            "is_wrong": state.is_wrong if state else False,
+            "is_favorite": flags["is_favorite"] if flags else (state.is_favorite if state else False),
+            "is_wrong": flags["is_wrong"] if flags else (state.is_wrong if state else False),
             "user_note": state.user_note if state else None,
         },
     }
+
+
+def _question_response(question):
+    flags = None
+    if question.status == 'active' and question.merged_into_question_id is None:
+        flags = question_repository.group_states(get_session(), [question.id]).get(question.id)
+    return _question_json(question, flags)
 
 
 def _parse_id_filters(field: str) -> list[int] | None:
@@ -109,18 +119,19 @@ def get_questions():
         questions = search_questions(session, query, filters)
     else:
         questions = list_questions(session, **filters)
-    return jsonify([_question_json(question) for question in questions])
+    flags = question_repository.group_states(session, [question.id for question in questions])
+    return jsonify([_question_json(question, flags.get(question.id)) for question in questions])
 
 
 @blueprint.post("/questions")
 def post_question():
     question = create_question(get_session(), request.get_json(silent=True))
-    return jsonify(_question_json(question)), 201
+    return jsonify(_question_response(question)), 201
 
 
 @blueprint.get("/questions/<int:question_id>")
 def get_question_by_id(question_id: int):
-    return jsonify(_question_json(get_question(get_session(), question_id)))
+    return jsonify(_question_response(get_question(get_session(), question_id)))
 
 
 @blueprint.get("/questions/<int:question_id>/similar-candidates")
@@ -151,29 +162,30 @@ def get_question_merge_preview(canonical_id: int):
 @blueprint.post("/questions/<int:canonical_id>/merge")
 def post_question_merge(canonical_id: int):
     result = merge_question(get_session(), canonical_id, request.get_json(silent=True))
-    return jsonify(_question_json(result))
+    return jsonify(_question_response(result))
 
 
 @blueprint.patch("/questions/<int:question_id>")
 def patch_question(question_id: int):
     question = update_question(get_session(), question_id, request.get_json(silent=True))
-    return jsonify(_question_json(question))
+    return jsonify(_question_response(question))
 
 
 @blueprint.post("/questions/<int:question_id>/archive")
 def post_archive_question(question_id: int):
     question = archive_question(get_session(), question_id)
-    return jsonify(_question_json(question))
+    return jsonify(_question_response(question))
 
 
 @blueprint.patch("/questions/<int:question_id>/state")
 def patch_question_state(question_id: int):
     state = update_question_state(get_session(), question_id, request.get_json(silent=True))
+    flags = question_repository.group_states(get_session(), [state.question_id])[state.question_id]
     return jsonify(
         {
             "question_id": state.question_id,
-            "is_favorite": state.is_favorite,
-            "is_wrong": state.is_wrong,
+            "is_favorite": flags["is_favorite"],
+            "is_wrong": flags["is_wrong"],
             "user_note": state.user_note,
             "updated_at": state.updated_at.isoformat() if state.updated_at else None,
         }
@@ -198,53 +210,16 @@ def get_question_sources(question_id: int):
             .order_by(QuestionSource.id)
         )
     )
-    return jsonify(
-        [
-            {
-                "question_source_id": source.id,
-                "question_id": source.question_id,
-                "source_asset_id": source.source_asset_id,
-                "source_type": source.source_asset.source_type,
-                "source_title": source.source_asset.title,
-                "original_filename": source.source_asset.original_filename,
-                "mime_type": source.source_asset.mime_type,
-                "display_width": source.source_asset.display_width,
-                "display_height": source.source_asset.display_height,
-                "locator_type": source.locator_type,
-                "locator_json": source.locator_json,
-                "locator_correction_json": source.locator_correction_json,
-                "source_text_snapshot": source.source_text_snapshot,
-                "raw_ocr_text_snapshot": source.raw_ocr_text_snapshot,
-                "confidence": source.confidence,
-                "ocr_block_ids": [
-                    link.ocr_block.id
-                    for link in sorted(
-                        source.ocr_block_links,
-                        key=lambda item: (
-                            item.ocr_block.reading_order,
-                            item.ocr_block.id,
-                        ),
-                    )
-                ],
-                "ocr_blocks": [
-                    {
-                        "id": link.ocr_block.id,
-                        "text": link.ocr_block.text,
-                        "bbox": link.ocr_block.bbox_json,
-                        "reading_order": link.ocr_block.reading_order,
-                        "confidence": link.ocr_block.confidence,
-                    }
-                    for link in sorted(
-                        source.ocr_block_links,
-                        key=lambda item: (
-                            item.ocr_block.reading_order,
-                            item.ocr_block.id,
-                        ),
-                    )
-                ],
-                "original_image_url": f"/api/v1/sources/{source.source_asset_id}/original",
-                "display_image_url": f"/api/v1/sources/{source.source_asset_id}/display",
-            }
-            for source in sources
-        ]
-    )
+    return jsonify([source_json(source) for source in sources])
+
+
+@blueprint.get("/questions/<int:question_id>/history")
+def get_question_history(question_id: int):
+    history = get_canonical_history(get_session(), question_id)
+    return jsonify({
+        'canonical_question_id': history['canonical_question_id'],
+        'member_question_ids': history['member_question_ids'],
+        'sources': [source_json(row) for row in history['sources']],
+        'practice_reviews': [review_json(row) for row in history['practice_reviews']],
+        'session_items': [session_item_json(row) for row in history['session_items']],
+    })

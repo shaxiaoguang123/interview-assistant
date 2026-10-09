@@ -5,6 +5,7 @@ import unicodedata
 from datetime import datetime, timezone
 
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy import update
 from sqlalchemy.orm import Session
 
 from app.errors import ApiError
@@ -236,6 +237,15 @@ def update_question_state(session: Session, question_id: int, payload: dict) -> 
         if question.state is None:
             question.state = QuestionState(is_favorite=False, is_wrong=False)
         for field, value in payload.items():
-            setattr(question.state, field, value)
+            if value:
+                setattr(question.state, field, True)
+            else:
+                # Reserve SQLite before membership reads; clear only the named
+                # flag, preserving notes and the other historical state flag.
+                member_ids = question_repository.canonical_member_ids(session, question_id)
+                session.execute(update(QuestionState).where(
+                    QuestionState.question_id.in_(member_ids)
+                ).values(**{field: False}).execution_options(synchronize_session='fetch'))
+                setattr(question.state, field, False)
         session.flush()
     return question.state
