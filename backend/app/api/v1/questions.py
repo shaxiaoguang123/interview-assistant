@@ -5,6 +5,11 @@ from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
 from app.db import get_session
+from app.services.question_relations import (
+    get_similar_candidates,
+    review_question_relation,
+    scan_similar_candidates,
+)
 from app.errors import ApiError
 from app.models.ingestion import QuestionSource, QuestionSourceOCRBlock
 from app.models.question import Question
@@ -112,6 +117,23 @@ def post_question():
 @blueprint.get("/questions/<int:question_id>")
 def get_question_by_id(question_id: int):
     return jsonify(_question_json(get_question(get_session(), question_id)))
+
+
+@blueprint.get("/questions/<int:question_id>/similar-candidates")
+def get_question_similar_candidates(question_id: int):
+    return jsonify(get_similar_candidates(get_session(), question_id))
+
+
+@blueprint.post("/questions/<int:question_id>/similar-candidates/scan")
+def post_question_similarity_scan(question_id: int):
+    return jsonify(scan_similar_candidates(get_session(), question_id))
+
+
+@blueprint.patch("/question-relations/<int:relation_id>")
+def patch_question_relation(relation_id: int):
+    return jsonify(review_question_relation(
+        get_session(), relation_id, request.get_json(silent=True)
+    ))
 
 
 @blueprint.patch("/questions/<int:question_id>")
