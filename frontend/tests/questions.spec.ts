@@ -68,6 +68,10 @@ function jsonResponse<T>(body: T, status = 200): Response {
   return { ok: status >= 200 && status < 300, status, json: async () => body } as Response;
 }
 
+function makeHistory(id: number, sources: unknown[] = [], reviews: ReviewFixture[] = []) {
+  return {canonical_question_id: id, member_question_ids: [id], sources, practice_reviews: reviews, session_items: []};
+}
+
 function questionFetchMock(
   override: (path: string, init?: RequestInit) => Response | Promise<Response> | undefined = () => undefined,
   reviewRows: Record<number, ReviewFixture[]> = {},
@@ -84,9 +88,8 @@ function questionFetchMock(
       const id = Number(detail[1]);
       return jsonResponse(makeQuestion(id, id === 1 ? "Question A" : `Question ${id}`));
     }
-    const reviews = path.match(/^\/api\/v1\/questions\/(\d+)\/practice-reviews$/);
-    if (reviews) return jsonResponse(reviewRows[Number(reviews[1])] ?? []);
-    if (/^\/api\/v1\/questions\/\d+\/sources$/.test(path)) return jsonResponse([]);
+    const history = path.match(/^\/api\/v1\/questions\/(\d+)\/history$/);
+    if (history) return jsonResponse(makeHistory(Number(history[1]), [], reviewRows[Number(history[1])] ?? []));
     throw new Error(`Unexpected request: ${String(init?.method ?? "GET")} ${path}`);
   }) as typeof fetch;
 }
@@ -292,8 +295,8 @@ describe("manual question bank", () => {
         if (path === "/api/v1/topics" || path === "/api/v1/tags") {
           return { ok: true, status: 200, json: async () => [] } as Response;
         }
-        if (path === "/api/v1/questions/1/practice-reviews") {
-          return { ok: true, status: 200, json: async () => [] } as Response;
+        if (path === "/api/v1/questions/1/history") {
+          return { ok: true, status: 200, json: async () => makeHistory(1) } as Response;
         }
         if (path === "/api/v1/questions/1" && init?.method === "PATCH") {
           const body = JSON.parse(String(init.body)) as Record<string, unknown>;
@@ -339,8 +342,8 @@ describe("manual question bank", () => {
       if (path === "/api/v1/topics" || path === "/api/v1/tags") {
         return { ok: true, status: 200, json: async () => [] } as Response;
       }
-      if (path === "/api/v1/questions/1/practice-reviews") {
-        return { ok: true, status: 200, json: async () => [] } as Response;
+      if (path === "/api/v1/questions/1/history") {
+        return { ok: true, status: 200, json: async () => makeHistory(1) } as Response;
       }
       if (path === "/api/v1/questions/1" && init?.method === "PATCH") {
         patchCount += 1;
@@ -409,8 +412,8 @@ describe("manual question bank", () => {
         if (path === "/api/v1/topics" || path === "/api/v1/tags") {
           return { ok: true, status: 200, json: async () => [] } as Response;
         }
-        if (path === "/api/v1/questions/1/practice-reviews") {
-          return { ok: true, status: 200, json: async () => [] } as Response;
+        if (path === "/api/v1/questions/1/history") {
+          return { ok: true, status: 200, json: async () => makeHistory(1) } as Response;
         }
         throw new Error(`Unexpected request: ${path}`);
       }),
@@ -501,11 +504,9 @@ describe("manual question bank", () => {
       if (path === "/api/v1/topics" || path === "/api/v1/tags") {
         return { ok: true, status: 200, json: async () => [] } as Response;
       }
-      if (path === "/api/v1/questions/1/practice-reviews") {
-        return { ok: true, status: 200, json: async () => [] } as Response;
-      }
-      if (path === "/api/v1/questions/1/sources") {
-        return { ok: true, status: 200, json: async () => sourceRows } as Response;
+
+      if (path === "/api/v1/questions/1/history") {
+        return { ok: true, status: 200, json: async () => makeHistory(1, sourceRows) } as Response;
       }
       throw new Error("Unexpected request: " + path);
     });
@@ -571,10 +572,8 @@ describe("manual question bank", () => {
         if (path === "/api/v1/topics" || path === "/api/v1/tags") {
           return { ok: true, status: 200, json: async () => [] } as Response;
         }
-        if (path === "/api/v1/questions/1/practice-reviews") {
-          return { ok: true, status: 200, json: async () => [] } as Response;
-        }
-        if (path === "/api/v1/questions/1/sources") {
+
+        if (path === "/api/v1/questions/1/history") {
           sourceAttempts += 1;
           if (sourceAttempts === 1) {
             return {
@@ -583,7 +582,7 @@ describe("manual question bank", () => {
               json: async () => ({ error: { code: "UNAVAILABLE", message: "Source service unavailable" } }),
             } as Response;
           }
-          return { ok: true, status: 200, json: async () => [sourceRow] } as Response;
+          return { ok: true, status: 200, json: async () => makeHistory(1, [sourceRow]) } as Response;
         }
         throw new Error("Unexpected request: " + path);
       }),
@@ -595,15 +594,15 @@ describe("manual question bank", () => {
     const wrapper = mount(pageModule!.default!, { global: { plugins: [router] } });
     await flushPromises();
 
-    expect(wrapper.get("[aria-label='题目来源加载失败']").text()).toContain("Source service unavailable");
+    expect(wrapper.get("[aria-label='题目历史加载失败']").text()).toContain("Source service unavailable");
     expect(wrapper.find("[aria-label='暂无截图来源']").exists()).toBe(false);
-    await wrapper.get("button[aria-label='重试加载题目来源']").trigger("click");
+    await wrapper.get("button[aria-label='重试加载题目历史']").trigger("click");
     await flushPromises();
 
     expect(sourceAttempts).toBe(2);
     expect(wrapper.find("[data-source-asset-id='20']").exists()).toBe(true);
     expect(wrapper.get("[aria-label='题目来源证据']").text()).toContain("Source loaded after retry");
-    expect(wrapper.find("[aria-label='题目来源加载失败']").exists()).toBe(false);
+    expect(wrapper.find("[aria-label='题目历史加载失败']").exists()).toBe(false);
   });
 
   it("shows a real empty-source state for a manual question", async () => {
@@ -624,11 +623,9 @@ describe("manual question bank", () => {
         if (path === "/api/v1/topics" || path === "/api/v1/tags") {
           return { ok: true, status: 200, json: async () => [] } as Response;
         }
-        if (path === "/api/v1/questions/1/practice-reviews") {
-          return { ok: true, status: 200, json: async () => [] } as Response;
-        }
-        if (path === "/api/v1/questions/1/sources") {
-          return { ok: true, status: 200, json: async () => [] } as Response;
+
+        if (path === "/api/v1/questions/1/history") {
+          return { ok: true, status: 200, json: async () => makeHistory(1) } as Response;
         }
         throw new Error("Unexpected request: " + path);
       }),
@@ -641,7 +638,7 @@ describe("manual question bank", () => {
 
     expect(wrapper.get("[aria-label='暂无截图来源']").text()).toBe("暂无截图来源");
     expect(wrapper.find("[aria-label='截图来源定位']").exists()).toBe(false);
-    expect(wrapper.find("[aria-label='题目来源加载失败']").exists()).toBe(false);
+    expect(wrapper.find("[aria-label='题目历史加载失败']").exists()).toBe(false);
   });
 
   it("ignores a delayed source response after navigation to another question", async () => {
@@ -682,10 +679,10 @@ describe("manual question bank", () => {
       }
       const reviews = path.match(/^\/api\/v1\/questions\/(\d+)\/practice-reviews$/);
       if (reviews) return { ok: true, status: 200, json: async () => [] } as Response;
-      const sources = path.match(/^\/api\/v1\/questions\/(\d+)\/sources$/);
+      const sources = path.match(/^\/api\/v1\/questions\/(\d+)\/history$/);
       if (sources && sources[1] === "1") return sourceA.promise;
       if (sources && sources[1] === "2") {
-        return { ok: true, status: 200, json: async () => sourceForQuestion(2, 202, "Question B source") } as Response;
+        return { ok: true, status: 200, json: async () => makeHistory(2, sourceForQuestion(2, 202, "Question B source")) } as Response;
       }
       throw new Error("Unexpected request: " + path);
     });
@@ -696,7 +693,7 @@ describe("manual question bank", () => {
     await router.isReady();
     const wrapper = mount(pageModule!.default!, { global: { plugins: [router] } });
     await flushPromises();
-    expect(fetchMock).toHaveBeenCalledWith("/api/v1/questions/1/sources", expect.anything());
+    expect(fetchMock).toHaveBeenCalledWith("/api/v1/questions/1/history", expect.anything());
 
     await router.push("/questions/2");
     await flushPromises();
@@ -704,14 +701,14 @@ describe("manual question bank", () => {
     sourceA.resolve({
       ok: true,
       status: 200,
-      json: async () => sourceForQuestion(1, 101, "Delayed Question A source"),
+      json: async () => makeHistory(1, sourceForQuestion(1, 101, "Delayed Question A source")),
     } as Response);
     await flushPromises();
 
     expect(wrapper.find("[data-source-asset-id='202']").exists()).toBe(true);
     expect(wrapper.get("[aria-label='题目来源证据']").text()).toContain("Question B source");
     expect(wrapper.get("[aria-label='题目来源证据']").text()).not.toContain("Delayed Question A source");
-    expect(wrapper.find("[aria-label='题目来源加载失败']").exists()).toBe(false);
+    expect(wrapper.find("[aria-label='题目历史加载失败']").exists()).toBe(false);
   });
 
   it("ignores a successful save response from the previous question", async () => {

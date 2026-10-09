@@ -360,11 +360,11 @@ describe("rule-based practice", () => {
       if (path === "/api/v1/topics" || path === "/api/v1/tags") {
         return { ok: true, status: 200, json: async () => [] } as Response;
       }
-      if (path === "/api/v1/questions/1/practice-reviews") {
+      if (path === "/api/v1/questions/1/history") {
         return {
           ok: true,
           status: 200,
-          json: async () => [
+          json: async () => ({canonical_question_id:1,member_question_ids:[1],sources:[],session_items:[],practice_reviews:[
             {
               id: 21,
               question_id: 1,
@@ -374,7 +374,7 @@ describe("rule-based practice", () => {
               created_at: "2026-10-08T00:00:00Z",
               updated_at: rating === "vague" ? "2026-10-08T00:00:00Z" : "2026-10-08T00:01:00Z",
             },
-          ],
+          ]}),
         } as Response;
       }
       if (path === "/api/v1/practice-reviews/21" && method === "PATCH") {
@@ -408,7 +408,7 @@ describe("rule-based practice", () => {
 
     const patch = requests.find((item) => item.path === "/api/v1/practice-reviews/21");
     expect(JSON.parse(patch?.body ?? "{}" )).toEqual({ review_rating: "basic" });
-    expect(requests.filter((item) => item.path === "/api/v1/questions/1/practice-reviews")).toHaveLength(1);
+    expect(requests.filter((item) => item.path === "/api/v1/questions/1/history")).toHaveLength(1);
     expect(wrapper.findAll("[data-review-id='21']")).toHaveLength(1);
     expect(wrapper.text()).toContain("基本会");
   });

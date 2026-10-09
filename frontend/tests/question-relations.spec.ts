@@ -285,6 +285,8 @@ describe("Question detail relation integration", () => {
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const path = String(input);
       if (path === "/api/v1/topics" || path === "/api/v1/tags" || /\/(sources|practice-reviews)$/.test(path)) return json([]);
+      const history = path.match(/^\/api\/v1\/questions\/(\d+)\/history$/);
+      if (history) return json({canonical_question_id:Number(history[1]), member_question_ids:[Number(history[1])], sources:[], practice_reviews:[], session_items:[]});
       const detail = path.match(/^\/api\/v1\/questions\/(\d+)$/);
       if (detail) return json({ id: Number(detail[1]), text: "Question " + detail[1], status: "active", archived_at: null, answer_type: null, difficulty: null, topics: [], tags: [], state: { is_favorite: false, is_wrong: false, user_note: null } });
       if (init?.method === "PATCH") return old.promise;
