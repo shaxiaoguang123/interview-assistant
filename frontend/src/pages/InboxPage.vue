@@ -792,6 +792,7 @@ onMounted(loadSources);
   padding: 0.75rem;
   border: 1px solid #d4d8df;
   border-radius: 0.5rem;
+  overflow-wrap: anywhere;
 }
 
 pre {
