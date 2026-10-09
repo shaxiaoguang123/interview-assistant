@@ -21,8 +21,9 @@ from app.models.ingestion import (
     QuestionSourceOCRBlock,
     SourceAsset,
 )
-from app.models.question import Question
+from app.models.question import Question, QuestionRelation
 from app.services.source_storage import save_source_file
+from app.services.questions import prepare_question_text
 
 
 BACKEND_ROOT = Path(__file__).resolve().parents[2]
@@ -175,6 +176,101 @@ def test_ocr_job_persists_engine_version_and_blocks(app):
         assert source.source_text_snapshot == "What is MCP?"
         assert source.raw_ocr_text_snapshot == "What is MCP?"
         assert link.ocr_block_id == block.id
+
+
+def test_ocr_job_persistence_suggests_duplicate_without_publishing_candidate(app):
+    service = _ingestion_service()
+    adapter_module = _adapter_module()
+    _, job_id = _create_source_job(app)
+    active_text, normalized, digest = prepare_question_text("What is MCP?")
+    with app.extensions["sqlalchemy_session_factory"].begin() as session:
+        active_question = Question(
+            text=active_text,
+            normalized_text=normalized,
+            search_text=normalized,
+            normalized_hash=digest,
+            status="active",
+        )
+        session.add(active_question)
+        session.flush()
+        active_question_id = active_question.id
+
+    adapter = FakeOCRAdapter([_detection(adapter_module, text="What is MCP?")])
+    result = service.run_ingestion(app, job_id, adapter=adapter)
+
+    assert result["status"] == "succeeded"
+    with Session(app.extensions["sqlalchemy_engine"]) as session:
+        candidate = session.scalar(
+            select(Question).where(Question.origin_ingestion_job_id == job_id)
+        )
+        relation = session.scalar(
+            select(QuestionRelation).where(
+                QuestionRelation.question_id == min(active_question_id, candidate.id),
+                QuestionRelation.related_question_id == max(active_question_id, candidate.id),
+            )
+        )
+        assert relation is not None
+        assert relation.relation_type == "same_question"
+        assert relation.decision_status == "suggested"
+        assert candidate.status == "pending_review"
+        assert candidate.ingestion_candidate_state == "pending_review"
+        assert session.get(Question, active_question_id).status == "active"
+
+
+def test_similarity_failure_rolls_back_ocr_blocks_questions_sources_and_relations(
+    app, monkeypatch
+):
+    similarity_path = (
+        Path(__file__).resolve().parents[2]
+        / "app"
+        / "services"
+        / "question_similarity.py"
+    )
+    assert similarity_path.is_file(), "missing feature: transactional relation refresh"
+    service = _ingestion_service()
+    similarity = import_module("app.services.question_similarity")
+    adapter_module = _adapter_module()
+    _, job_id = _create_source_job(app)
+    active_text, normalized, digest = prepare_question_text("What is MCP?")
+    with app.extensions["sqlalchemy_session_factory"].begin() as session:
+        session.add(
+            Question(
+                text=active_text,
+                normalized_text=normalized,
+                search_text=normalized,
+                normalized_hash=digest,
+                status="active",
+            )
+        )
+    original_refresh = similarity.refresh_rule_suggestions
+
+    def fail_after_relation_insert(session, question_id):
+        relations = original_refresh(session, question_id)
+        assert relations
+        raise RuntimeError("injected similarity persistence failure")
+
+    monkeypatch.setattr(service, "refresh_rule_suggestions", fail_after_relation_insert)
+    adapter = FakeOCRAdapter([_detection(adapter_module, text="What is MCP?")])
+
+    result = service.run_ingestion(app, job_id, adapter=adapter)
+
+    assert result["status"] == "failed"
+    assert result["failure_stage"] == "persisting_results"
+    with Session(app.extensions["sqlalchemy_engine"]) as session:
+        assert session.scalar(
+            select(func.count()).select_from(OCRBlock).where(OCRBlock.ingestion_job_id == job_id)
+        ) == 0
+        assert session.scalar(
+            select(func.count())
+            .select_from(Question)
+            .where(Question.origin_ingestion_job_id == job_id)
+        ) == 0
+        assert session.scalar(
+            select(func.count()).select_from(QuestionSource)
+        ) == 0
+        assert session.scalar(
+            select(func.count()).select_from(QuestionRelation)
+        ) == 0
 
 
 def test_empty_ocr_result_completes_without_candidates(app):

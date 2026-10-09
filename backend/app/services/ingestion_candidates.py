@@ -22,6 +22,11 @@ from app.models.question import (
 )
 from app.repositories import questions as question_repository
 from app.services.questions import prepare_question_text
+from app.services.question_similarity import (
+    invalidate_unmerged_question_relations,
+    refresh_rule_suggestions,
+    unresolved_same_question_relations,
+)
 from app.services.taxonomy import validate_active_tag_ids, validate_active_topic_ids
 
 
@@ -100,6 +105,19 @@ def _advance_candidate(
         raise ApiError(409, "CONFLICT", "OCR candidate changed; reload it before editing")
     session.flush()
     session.expire(candidate)
+
+
+def _begin_confirmation_write_transaction(session: Session) -> None:
+    """Serialize similarity validation with candidate promotion on SQLite.
+
+    Python's sqlite3 legacy transaction mode does not begin a database
+    transaction for SELECT statements. Acquiring the write reservation before
+    reading the candidate and its relation targets prevents another
+    confirmation from passing the same eligibility check concurrently.
+    """
+    connection = session.connection()
+    if connection.dialect.name == "sqlite":
+        connection.exec_driver_sql("BEGIN IMMEDIATE")
 
 
 def _parse_locator(value: object, field: str) -> dict[str, float] | None:
@@ -279,6 +297,7 @@ def create_candidate_from_ocr_blocks(
             ]
         )
         session.flush()
+        refresh_rule_suggestions(session, question.id)
         candidate_id = question.id
 
     return question_repository.get_question(session, candidate_id)
@@ -372,6 +391,7 @@ def patch_ingestion_candidate(
         if prepared_text is None and topics is None and tags is None and not parsed_corrections:
             return question_repository.get_question(session, candidate_id)
 
+        text_changed = prepared_text is not None
         _advance_candidate(session, candidate, expected_revision)
         candidate = session.get(Question, candidate_id)
         if prepared_text is not None:
@@ -390,6 +410,8 @@ def patch_ingestion_candidate(
         for source, locator in parsed_corrections:
             source.locator_correction_json = locator
         session.flush()
+        if text_changed:
+            refresh_rule_suggestions(session, candidate.id)
         session.expire(candidate)
 
     return question_repository.get_question(session, candidate_id)
@@ -524,6 +546,7 @@ def split_ingestion_candidate(
                 "ingestion_candidate_state": "superseded",
             },
         )
+        invalidate_unmerged_question_relations(session, candidate.id)
 
         children: list[Question] = []
         for part in parts:
@@ -561,6 +584,8 @@ def split_ingestion_candidate(
                     for block_id in part["block_ids"]
                 ]
             )
+            session.flush()
+            refresh_rule_suggestions(session, child.id)
             children.append(child)
         session.flush()
         return [child.id for child in children]
@@ -687,6 +712,7 @@ def merge_ingestion_candidates(
                         "superseded_by_candidate_id": survivor_id,
                     },
                 )
+                invalidate_unmerged_question_relations(session, candidate_id)
                 for source in sources_by_candidate[candidate_id]:
                     _copy_question_source(session, source, survivor_id, job)
 
@@ -696,6 +722,7 @@ def merge_ingestion_candidates(
         survivor.search_text = final_normalized
         survivor.normalized_hash = final_hash
         session.flush()
+        refresh_rule_suggestions(session, survivor.id)
         return survivor_id, [candidate_id for candidate_id in candidates if candidate_id != survivor_id]
 
 
@@ -719,6 +746,7 @@ def reject_ingestion_candidate(
                 "ingestion_candidate_state": "rejected",
             },
         )
+        invalidate_unmerged_question_relations(session, candidate.id)
     return session.get(Question, candidate_id)
 
 
@@ -730,7 +758,9 @@ def confirm_ingestion_candidate(
     if not isinstance(payload, dict) or set(payload) != {"expected_revision"}:
         raise _validation("body", "Expected expected_revision")
     revision = _expected_revision(payload)
+    blocked_by_same_question = False
     with session.begin():
+        _begin_confirmation_write_transaction(session)
         candidate = _load_candidate(session, candidate_id)
         _require_pending(candidate, revision)
         job = session.get(IngestionJob, candidate.origin_ingestion_job_id)
@@ -738,33 +768,45 @@ def confirm_ingestion_candidate(
             raise ApiError(404, "NOT_FOUND", "Candidate ingestion job not found")
         if job.status != "succeeded":
             raise ApiError(409, "CONFLICT", "Only candidates from a completed OCR job can be confirmed")
-        prepare_question_text(candidate.text)
-        topic_ids = list(
-            session.scalars(
-                select(QuestionTopic.topic_id).where(
-                    QuestionTopic.question_id == candidate_id
+        refresh_rule_suggestions(session, candidate.id)
+        blocked_by_same_question = bool(
+            unresolved_same_question_relations(session, candidate.id)
+        )
+        if not blocked_by_same_question:
+            prepare_question_text(candidate.text)
+            topic_ids = list(
+                session.scalars(
+                    select(QuestionTopic.topic_id).where(
+                        QuestionTopic.question_id == candidate_id
+                    )
                 )
             )
-        )
-        tag_ids = list(
-            session.scalars(
-                select(QuestionTag.tag_id).where(
-                    QuestionTag.question_id == candidate_id
+            tag_ids = list(
+                session.scalars(
+                    select(QuestionTag.tag_id).where(
+                        QuestionTag.question_id == candidate_id
+                    )
                 )
             )
+            validate_active_topic_ids(session, topic_ids)
+            validate_active_tag_ids(session, tag_ids)
+            _advance_candidate(
+                session,
+                candidate,
+                revision,
+                values={
+                    "status": "active",
+                    "ingestion_candidate_state": "confirmed",
+                },
+            )
+            if session.get(QuestionState, candidate_id) is None:
+                session.add(QuestionState(question_id=candidate_id, is_favorite=False, is_wrong=False))
+            session.flush()
+    if blocked_by_same_question:
+        raise ApiError(
+            409,
+            "CONFLICT",
+            "Review same-question suggestions before confirming this OCR candidate",
+            {"similar_questions": "Reject or reclassify the relation, or merge the candidate into a canonical Question"},
         )
-        validate_active_topic_ids(session, topic_ids)
-        validate_active_tag_ids(session, tag_ids)
-        _advance_candidate(
-            session,
-            candidate,
-            revision,
-            values={
-                "status": "active",
-                "ingestion_candidate_state": "confirmed",
-            },
-        )
-        if session.get(QuestionState, candidate_id) is None:
-            session.add(QuestionState(question_id=candidate_id, is_favorite=False, is_wrong=False))
-        session.flush()
     return question_repository.get_question(session, candidate_id)

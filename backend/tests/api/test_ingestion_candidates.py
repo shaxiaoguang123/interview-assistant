@@ -1,5 +1,8 @@
 from datetime import datetime, timezone
+from hashlib import sha256
 from io import BytesIO
+from importlib import import_module
+from pathlib import Path
 from queue import Queue
 import threading
 from uuid import uuid4
@@ -15,10 +18,11 @@ from app.models.ingestion import (
     QuestionSource,
     QuestionSourceOCRBlock,
 )
-from app.models.question import Question, QuestionState
+from app.models.question import Question, QuestionRelation, QuestionState
 from app.models.question import QuestionTag, QuestionTopic
 from app.ocr.adapter import OCRDetection
 from app.services.candidate_builder import build_candidate_groups
+from app.services.questions import prepare_question_text
 
 
 def _png_bytes():
@@ -67,11 +71,12 @@ def _add_candidate(
         )
         session.add(block)
         blocks.append(block)
+    question_text, normalized_text, normalized_hash = prepare_question_text(text)
     candidate = Question(
-        text=text,
-        normalized_text=text.casefold(),
-        search_text=text.casefold(),
-        normalized_hash=str(uuid4().hex),
+        text=question_text,
+        normalized_text=normalized_text,
+        search_text=normalized_text,
+        normalized_hash=normalized_hash,
         status="pending_review",
         origin_ingestion_job_id=job_id,
         ingestion_candidate_state="pending_review",
@@ -142,6 +147,17 @@ def _create_topic(client):
     if response.status_code == 201:
         return response.get_json()["id"]
     return client.get("/api/v1/topics").get_json()[0]["id"]
+
+
+def _similarity_service():
+    service_path = (
+        Path(__file__).resolve().parents[2]
+        / "app"
+        / "services"
+        / "question_similarity.py"
+    )
+    assert service_path.is_file(), "missing feature: rule-based Question similarity service"
+    return import_module("app.services.question_similarity")
 
 
 def test_generic_question_patch_rejects_pending_ocr_candidate_without_mutation(client, app):
@@ -727,6 +743,132 @@ def test_split_and_confirm_race_has_one_winner(client, app, monkeypatch):
     assert statuses == [200, 409]
 
 
+def test_concurrent_duplicate_confirmations_are_serialized_before_similarity_gate(
+    client, app, monkeypatch
+):
+    first = _candidate_fixture(client, app, text="Explain SQLite transactions.")
+    second = _candidate_fixture(client, app, text="Explain SQLite transactions.")
+    import app.services.ingestion_candidates as candidate_service
+
+    original_unresolved = candidate_service.unresolved_same_question_relations
+    first_gate_reached = threading.Event()
+    release_first_gate = threading.Event()
+    progress = threading.Event()
+    gate_lock = threading.Lock()
+    gate_count = 0
+    transaction_owner: int | None = None
+    responses: Queue = Queue()
+    progressed = False
+
+    def pause_first_gate(session, question_id):
+        nonlocal gate_count
+        result = original_unresolved(session, question_id)
+        with gate_lock:
+            gate_count += 1
+            current_count = gate_count
+        if current_count == 1:
+            first_gate_reached.set()
+            if not release_first_gate.wait(timeout=5):
+                raise AssertionError("first confirmation gate was never released")
+        else:
+            progress.set()
+        return result
+
+    def observe_competing_immediate_lock(
+        connection, _cursor, statement, _parameters, _context, _executemany
+    ):
+        nonlocal transaction_owner
+        if statement.strip().upper() != "BEGIN IMMEDIATE":
+            return
+        connection_id = id(connection.connection.driver_connection)
+        with gate_lock:
+            if transaction_owner is None:
+                transaction_owner = connection_id
+            elif connection_id != transaction_owner:
+                progress.set()
+
+    monkeypatch.setattr(
+        candidate_service,
+        "unresolved_same_question_relations",
+        pause_first_gate,
+    )
+    engine = app.extensions["sqlalchemy_engine"]
+    event.listen(engine, "before_cursor_execute", observe_competing_immediate_lock)
+    start = threading.Barrier(3)
+    clients = [app.test_client(), app.test_client()]
+    fixtures = [first, second]
+
+    def confirm_request(request_client, fixture):
+        start.wait(timeout=5)
+        response = request_client.post(
+            f"/api/v1/ingestion-candidates/{fixture['candidate_id']}/confirm",
+            json={"expected_revision": 0},
+        )
+        responses.put(response)
+
+    workers = [
+        threading.Thread(
+            target=confirm_request,
+            args=(request_client, fixture),
+            name=f"confirm-{index}",
+        )
+        for index, (request_client, fixture) in enumerate(
+            zip(clients, fixtures), start=1
+        )
+    ]
+    try:
+        for worker in workers:
+            worker.start()
+        start.wait(timeout=5)
+        assert first_gate_reached.wait(timeout=5)
+        # The second request either reaches the unsafe gate in the legacy flow,
+        # or attempts BEGIN IMMEDIATE and waits for the first transaction.
+        progressed = progress.wait(timeout=2)
+    finally:
+        release_first_gate.set()
+        for worker in workers:
+            worker.join(timeout=8)
+        event.remove(engine, "before_cursor_execute", observe_competing_immediate_lock)
+
+    assert all(not worker.is_alive() for worker in workers)
+    assert progressed
+    statuses = sorted(
+        [responses.get_nowait().status_code, responses.get_nowait().status_code]
+    )
+    assert statuses == [200, 409]
+
+    candidate_ids = {first["candidate_id"], second["candidate_id"]}
+    with app.extensions["sqlalchemy_session_factory"]() as session:
+        candidates = [
+            session.get(Question, question_id) for question_id in candidate_ids
+        ]
+        assert sorted(candidate.status for candidate in candidates) == [
+            "active",
+            "pending_review",
+        ]
+        active_candidate = next(
+            candidate for candidate in candidates if candidate.status == "active"
+        )
+        pending_candidate = next(
+            candidate
+            for candidate in candidates
+            if candidate.status == "pending_review"
+        )
+        assert active_candidate.ingestion_candidate_state == "confirmed"
+        assert active_candidate.candidate_revision == 1
+        assert pending_candidate.ingestion_candidate_state == "pending_review"
+        assert pending_candidate.candidate_revision == 0
+        relation = session.scalar(
+            select(QuestionRelation).where(
+                QuestionRelation.question_id == min(candidate_ids),
+                QuestionRelation.related_question_id == max(candidate_ids),
+            )
+        )
+        assert relation is not None
+        assert relation.relation_type == "same_question"
+        assert relation.decision_status == "suggested"
+
+
 def test_split_failure_rolls_back_parent_children_and_sources(client, app):
     fixture = _candidate_fixture(
         client,
@@ -1261,3 +1403,328 @@ def test_split_keeps_corrected_question_text_separate_from_ocr_snapshot(client, 
         "question",
     ]
     assert all(child["sources"][0]["raw_ocr_text_snapshot"] == "LangGrapn state question" for child in children)
+
+
+def test_candidate_confirmation_rescans_and_blocks_exact_active_duplicate(client, app):
+    active = client.post(
+        "/api/v1/questions",
+        json={"text": "What is MCP?"},
+    ).get_json()
+    fixture = _candidate_fixture(client, app, text="What is MCP?")
+
+    response = client.post(
+        f"/api/v1/ingestion-candidates/{fixture['candidate_id']}/confirm",
+        json={"expected_revision": fixture["revision"]},
+    )
+
+    assert response.status_code == 409
+    assert response.get_json()["error"]["code"] == "CONFLICT"
+    with app.extensions["sqlalchemy_session_factory"]() as session:
+        candidate = session.get(Question, fixture["candidate_id"])
+        relation = session.scalar(
+            select(QuestionRelation).where(
+                QuestionRelation.question_id == min(active["id"], candidate.id),
+                QuestionRelation.related_question_id == max(active["id"], candidate.id),
+            )
+        )
+        assert candidate.status == "pending_review"
+        assert candidate.ingestion_candidate_state == "pending_review"
+        assert candidate.candidate_revision == fixture["revision"]
+        assert relation is not None
+        assert relation.relation_type == "same_question"
+        assert relation.decision_status == "suggested"
+        relation.decision_status = "accepted"
+        session.commit()
+
+    assert [
+        question["id"]
+        for question in client.get(
+            "/api/v1/questions", query_string={"q": "MCP"}
+        ).get_json()
+    ] == [active["id"]]
+    practice = client.post(
+        "/api/v1/practice-sessions",
+        json={"mode": "random", "limit": 10},
+    )
+    assert practice.status_code == 201
+    assert fixture["candidate_id"] not in {
+        item["question_id"] for item in practice.get_json()["items"]
+    }
+
+    still_blocked = client.post(
+        f"/api/v1/ingestion-candidates/{fixture['candidate_id']}/confirm",
+        json={"expected_revision": fixture["revision"]},
+    )
+    assert still_blocked.status_code == 409
+    with app.extensions["sqlalchemy_session_factory"].begin() as session:
+        relation = session.scalar(
+            select(QuestionRelation).where(
+                QuestionRelation.question_id == min(active["id"], fixture["candidate_id"]),
+                QuestionRelation.related_question_id == max(active["id"], fixture["candidate_id"]),
+            )
+        )
+        assert relation.relation_type == "same_question"
+        assert relation.decision_status == "accepted"
+        relation.relation_type = "related_question"
+        relation.decision_status = "accepted"
+
+    explicitly_distinct = client.post(
+        f"/api/v1/ingestion-candidates/{fixture['candidate_id']}/confirm",
+        json={"expected_revision": fixture["revision"]},
+    )
+    assert explicitly_distinct.status_code == 200
+
+
+def test_archived_duplicate_target_does_not_block_candidate_confirmation(client, app):
+    similarity = _similarity_service()
+    active = client.post(
+        "/api/v1/questions",
+        json={"text": "What is MCP?"},
+    ).get_json()
+    fixture = _candidate_fixture(client, app, text="What is MCP?")
+    with app.extensions["sqlalchemy_session_factory"].begin() as session:
+        similarity.refresh_rule_suggestions(session, fixture["candidate_id"])
+        relation = session.scalar(
+            select(QuestionRelation).where(
+                QuestionRelation.question_id == min(active["id"], fixture["candidate_id"]),
+                QuestionRelation.related_question_id == max(active["id"], fixture["candidate_id"]),
+            )
+        )
+        assert relation is not None
+        relation.decision_status = "accepted"
+
+    archive = client.post(f"/api/v1/questions/{active['id']}/archive")
+    assert archive.status_code == 200
+    with app.extensions["sqlalchemy_session_factory"]() as session:
+        assert session.scalar(
+            select(QuestionRelation.id).where(
+                QuestionRelation.question_id == min(active["id"], fixture["candidate_id"]),
+                QuestionRelation.related_question_id == max(active["id"], fixture["candidate_id"]),
+            )
+        ) is None
+
+    confirmed = client.post(
+        f"/api/v1/ingestion-candidates/{fixture['candidate_id']}/confirm",
+        json={"expected_revision": fixture["revision"]},
+    )
+
+    assert confirmed.status_code == 200
+    with app.extensions["sqlalchemy_session_factory"]() as session:
+        candidate = session.get(Question, fixture["candidate_id"])
+        source = session.get(QuestionSource, fixture["source_id"])
+        assert candidate.status == "active"
+        assert candidate.ingestion_candidate_state == "confirmed"
+        assert source.raw_ocr_text_snapshot == "What is MCP?"
+
+
+@pytest.mark.parametrize(
+    ("relation_type", "decision_status"),
+    [
+        ("same_question", "rejected"),
+        ("different_question", "accepted"),
+    ],
+)
+def test_explicit_duplicate_exclusion_allows_candidate_confirmation(
+    client, app, relation_type, decision_status
+):
+    active = client.post(
+        "/api/v1/questions",
+        json={"text": "What is MCP?"},
+    ).get_json()
+    fixture = _candidate_fixture(client, app, text="What is MCP?")
+    blocked = client.post(
+        f"/api/v1/ingestion-candidates/{fixture['candidate_id']}/confirm",
+        json={"expected_revision": fixture["revision"]},
+    )
+    assert blocked.status_code == 409
+
+    with app.extensions["sqlalchemy_session_factory"].begin() as session:
+        relation = session.scalar(
+            select(QuestionRelation).where(
+                QuestionRelation.question_id
+                == min(active["id"], fixture["candidate_id"]),
+                QuestionRelation.related_question_id
+                == max(active["id"], fixture["candidate_id"]),
+            )
+        )
+        relation.relation_type = relation_type
+        relation.decision_status = decision_status
+
+    confirmed = client.post(
+        f"/api/v1/ingestion-candidates/{fixture['candidate_id']}/confirm",
+        json={"expected_revision": fixture["revision"]},
+    )
+
+    assert confirmed.status_code == 200
+    assert confirmed.get_json()["status"] == "active"
+
+
+def test_manual_ocr_block_candidate_gets_rule_suggestion(client, app):
+    active = client.post(
+        "/api/v1/questions",
+        json={"text": "What is MCP?"},
+    ).get_json()
+    fixture = _candidate_fixture(
+        client,
+        app,
+        text="Unnumbered introduction",
+        block_texts=["What is MCP?"],
+    )
+
+    response = client.post(
+        f"/api/v1/ingestions/{fixture['job_id']}/candidates",
+        json={"ocr_block_ids": fixture["block_ids"]},
+    )
+
+    assert response.status_code == 201
+    candidate_id = response.get_json()["id"]
+    with app.extensions["sqlalchemy_session_factory"]() as session:
+        candidate = session.get(Question, candidate_id)
+        relation = session.scalar(
+            select(QuestionRelation).where(
+                QuestionRelation.question_id == min(active["id"], candidate_id),
+                QuestionRelation.related_question_id == max(active["id"], candidate_id),
+            )
+        )
+        assert candidate.status == "pending_review"
+        assert candidate.ingestion_candidate_state == "pending_review"
+        assert relation is not None
+        assert relation.decision_status == "suggested"
+
+
+def test_candidate_text_edit_requeues_relation_even_when_normalized_hash_is_same(
+    client, app
+):
+    similarity = _similarity_service()
+    active = client.post(
+        "/api/v1/questions",
+        json={"text": "MCP 是什么?"},
+    ).get_json()
+    fixture = _candidate_fixture(client, app, text="MCP 是什么?")
+    with app.extensions["sqlalchemy_session_factory"].begin() as session:
+        similarity.refresh_rule_suggestions(session, fixture["candidate_id"])
+        relation = session.scalar(
+            select(QuestionRelation).where(
+                QuestionRelation.question_id == min(active["id"], fixture["candidate_id"]),
+                QuestionRelation.related_question_id == max(active["id"], fixture["candidate_id"]),
+            )
+        )
+        relation.decision_status = "accepted"
+        source_before = session.get(QuestionSource, fixture["source_id"]).raw_ocr_text_snapshot
+        candidate_hash = session.get(Question, fixture["candidate_id"]).normalized_hash
+
+    response = client.patch(
+        f"/api/v1/ingestion-candidates/{fixture['candidate_id']}",
+        json={"expected_revision": fixture["revision"], "text": "ＭＣＰ 是什么?"},
+    )
+
+    assert response.status_code == 200
+    with app.extensions["sqlalchemy_session_factory"]() as session:
+        candidate = session.get(Question, fixture["candidate_id"])
+        relation = session.scalar(
+            select(QuestionRelation).where(
+                QuestionRelation.question_id == min(active["id"], candidate.id),
+                QuestionRelation.related_question_id == max(active["id"], candidate.id),
+            )
+        )
+        source = session.get(QuestionSource, fixture["source_id"])
+        assert candidate.normalized_hash == candidate_hash
+        assert candidate.candidate_revision == fixture["revision"] + 1
+        assert relation.decision_status == "suggested"
+        assert relation.suggested_by == "rule"
+        expected_digest = sha256(candidate.text.encode("utf-8")).hexdigest()
+        if relation.question_id == candidate.id:
+            assert relation.question_text_sha256_snapshot == expected_digest
+        else:
+            assert relation.related_question_text_sha256_snapshot == expected_digest
+        assert source.raw_ocr_text_snapshot == source_before
+
+
+def test_split_children_receive_rule_suggestions_without_changing_parent_evidence(
+    client, app
+):
+    active = client.post(
+        "/api/v1/questions",
+        json={"text": "What is MCP?"},
+    ).get_json()
+    full_text = "What is MCP? Another interview question?"
+    fixture = _candidate_fixture(client, app, text=full_text, block_texts=[full_text])
+
+    response = client.post(
+        f"/api/v1/ingestions/{fixture['job_id']}/candidates/"
+        f"{fixture['candidate_id']}/split",
+        json={
+            "expected_revision": fixture["revision"],
+            "parts": [
+                {
+                    "text": "What is MCP?",
+                    "ocr_block_ids": fixture["block_ids"],
+                    "source_text_snapshot": "What is MCP?",
+                },
+                {
+                    "text": "Another interview question?",
+                    "ocr_block_ids": fixture["block_ids"],
+                    "source_text_snapshot": "Another interview question?",
+                },
+            ],
+        },
+    )
+
+    assert response.status_code == 200
+    first_child_id = response.get_json()["children"][0]["id"]
+    with app.extensions["sqlalchemy_session_factory"]() as session:
+        relation = session.scalar(
+            select(QuestionRelation).where(
+                QuestionRelation.question_id == min(active["id"], first_child_id),
+                QuestionRelation.related_question_id == max(active["id"], first_child_id),
+            )
+        )
+        parent_source = session.get(QuestionSource, fixture["source_id"])
+        assert relation is not None
+        assert relation.decision_status == "suggested"
+        assert parent_source.question_id == fixture["candidate_id"]
+        assert parent_source.raw_ocr_text_snapshot == full_text
+
+
+def test_candidate_merge_survivor_refreshes_suggestions_for_final_text(client, app):
+    active = client.post(
+        "/api/v1/questions",
+        json={"text": "What is MCP?"},
+    ).get_json()
+    fixture = _candidate_fixture(
+        client,
+        app,
+        text="First OCR part\nSecond OCR part",
+        block_texts=["First OCR part", "Second OCR part"],
+    )
+    second_candidate = client.post(
+        f"/api/v1/ingestions/{fixture['job_id']}/candidates",
+        json={"ocr_block_ids": [fixture["block_ids"][1]]},
+    )
+    assert second_candidate.status_code == 201
+
+    merged = client.post(
+        f"/api/v1/ingestions/{fixture['job_id']}/candidates/merge",
+        json={
+            "survivor_id": fixture["candidate_id"],
+            "candidates": [
+                {"id": fixture["candidate_id"], "expected_revision": 0},
+                {"id": second_candidate.get_json()["id"], "expected_revision": 0},
+            ],
+            "final_text": "What is MCP?",
+        },
+    )
+
+    assert merged.status_code == 200
+    with app.extensions["sqlalchemy_session_factory"]() as session:
+        survivor = session.get(Question, fixture["candidate_id"])
+        relation = session.scalar(
+            select(QuestionRelation).where(
+                QuestionRelation.question_id == min(active["id"], survivor.id),
+                QuestionRelation.related_question_id == max(active["id"], survivor.id),
+            )
+        )
+        assert survivor.text == "What is MCP?"
+        assert survivor.status == "pending_review"
+        assert relation is not None
+        assert relation.decision_status == "suggested"

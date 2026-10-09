@@ -1,7 +1,11 @@
 from datetime import datetime, timezone
+from hashlib import sha256
+
+from sqlalchemy import select
 
 from app.models.practice import PracticeReview, PracticeSession, SessionItem
-from app.models.question import Question, QuestionState
+from app.models.question import Question, QuestionRelation, QuestionState
+from app.services.questions import prepare_question_text
 
 
 def _create_topic(client, slug="agent-topic", name="Agent Topic"):
@@ -63,6 +67,68 @@ def test_question_crud_with_topics_and_tags(client):
     assert updated.get_json()["text"] == "MCP 通信协议是什么？"
     assert [item["id"] for item in updated.get_json()["topics"]] == [topic["id"]]
     assert [item["id"] for item in updated.get_json()["tags"]] == [tag["id"]]
+
+
+def test_manual_question_text_changes_refresh_relation_decisions_without_changing_evidence(
+    client, app
+):
+    first = client.post(
+        "/api/v1/questions",
+        json={"text": "MCP 通信协议?"},
+    ).get_json()
+    second = client.post(
+        "/api/v1/questions",
+        json={"text": "ＭＣＰ 通信协议?"},
+    ).get_json()
+
+    with app.extensions["sqlalchemy_session_factory"]() as session:
+        relation = session.scalar(
+            select(QuestionRelation).where(
+                QuestionRelation.question_id == min(first["id"], second["id"]),
+                QuestionRelation.related_question_id == max(first["id"], second["id"]),
+            )
+        )
+        assert relation is not None
+        assert relation.relation_type == "same_question"
+        assert relation.decision_status == "suggested"
+        relation_id = relation.id
+        second_text_before = session.get(Question, second["id"]).text
+        second_hash_before = session.get(Question, second["id"]).normalized_hash
+
+    with app.extensions["sqlalchemy_session_factory"].begin() as session:
+        relation = session.get(QuestionRelation, relation_id)
+        relation.relation_type = "related_question"
+        relation.decision_status = "accepted"
+        relation.suggested_by = "user"
+
+    unchanged = client.patch(
+        f"/api/v1/questions/{second['id']}",
+        json={"text": second_text_before},
+    )
+    assert unchanged.status_code == 200
+    with app.extensions["sqlalchemy_session_factory"]() as session:
+        assert session.get(QuestionRelation, relation_id).decision_status == "accepted"
+
+    edited_text, edited_normalized, edited_hash = prepare_question_text(
+        "  MCP   通信协议?  "
+    )
+    assert edited_text != second_text_before
+    assert edited_hash == second_hash_before
+    edited = client.patch(
+        f"/api/v1/questions/{second['id']}",
+        json={"text": edited_text},
+    )
+
+    assert edited.status_code == 200
+    assert edited.get_json()["normalized_text"] == edited_normalized
+    with app.extensions["sqlalchemy_session_factory"]() as session:
+        relation = session.get(QuestionRelation, relation_id)
+        assert relation.relation_type == "same_question"
+        assert relation.decision_status == "suggested"
+        assert relation.suggested_by == "rule"
+        assert relation.related_question_text_sha256_snapshot == sha256(
+            edited_text.encode("utf-8")
+        ).hexdigest()
 
 
 def test_question_taxonomy_patch_response_matches_saved_relations(client):
