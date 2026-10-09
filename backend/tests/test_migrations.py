@@ -5,7 +5,7 @@ import pytest
 from alembic import command
 from alembic.config import Config
 from sqlalchemy import create_engine, inspect, text
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.engine import URL
 
 from app import create_app
@@ -627,6 +627,72 @@ def test_phase1c_migration_rejects_legacy_merged_question_before_schema_changes(
             assert connection.scalar(
                 text("SELECT status FROM question WHERE id=1")
             ) == "merged"
+    finally:
+        engine.dispose()
+
+
+def test_phase1c_migration_failure_rolls_back_earlier_ddl(tmp_path):
+    database_path = tmp_path / "phase1c-ddl-failure.sqlite3"
+    config, database_url = _migration_config(database_path)
+    command.upgrade(config, "0003_phase1b_sources")
+    engine = create_engine(database_url)
+    try:
+        with engine.begin() as connection:
+            connection.execute(
+                text("CREATE TABLE question_relation (sentinel TEXT NOT NULL)")
+            )
+            connection.execute(
+                text(
+                    "INSERT INTO question_relation (sentinel) "
+                    "VALUES ('preserve-existing-object')"
+                )
+            )
+            triggers_before = {
+                row[0]
+                for row in connection.execute(
+                    text("SELECT name FROM sqlite_master WHERE type='trigger'")
+                )
+            }
+
+        with pytest.raises(OperationalError, match="question_relation"):
+            command.upgrade(config, "head")
+
+        with engine.connect() as connection:
+            assert connection.scalar(text("SELECT version_num FROM alembic_version")) == (
+                "0003_phase1b_sources"
+            )
+            columns = {
+                column["name"] for column in inspect(connection).get_columns("question")
+            }
+            indexes = {
+                index["name"] for index in inspect(connection).get_indexes("question")
+            }
+            triggers_after = {
+                row[0]
+                for row in connection.execute(
+                    text("SELECT name FROM sqlite_master WHERE type='trigger'")
+                )
+            }
+            assert "merged_into_question_id" not in columns
+            assert "ix_question_merged_into_question_id" not in indexes
+            assert "question_relation" in inspect(connection).get_table_names()
+            assert connection.scalar(
+                text("SELECT sentinel FROM question_relation")
+            ) == "preserve-existing-object"
+            assert triggers_after == triggers_before
+
+        with engine.begin() as connection:
+            connection.execute(text("DROP TABLE question_relation"))
+
+        command.upgrade(config, "head")
+        with engine.connect() as connection:
+            assert connection.scalar(text("SELECT version_num FROM alembic_version")) == (
+                "0004_question_relations"
+            )
+            assert "merged_into_question_id" in {
+                column["name"] for column in inspect(connection).get_columns("question")
+            }
+            assert "question_relation" in inspect(connection).get_table_names()
     finally:
         engine.dispose()
 
