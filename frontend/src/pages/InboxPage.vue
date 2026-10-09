@@ -15,7 +15,7 @@ interface IngestionJob {
   engine_version: string | null;
   error_code: string | null;
   error_message: string | null;
-  candidate_count: number;
+  candidate_count: number; // Automatically grouped candidates created by the OCR run.
 }
 
 interface SourceAsset {
@@ -46,6 +46,7 @@ interface Candidate {
   id: number;
   text: string;
   status: string;
+  archived_at: string | null;
   candidate_state: string;
   candidate_revision: number;
   split_from_candidate_id: number | null;
@@ -92,6 +93,7 @@ const selectedJobId = ref<number | null>(null);
 const selectedCandidateId = ref<number | null>(null);
 const selectedSourceId = ref<number | null>(null);
 const candidates = ref<Candidate[]>([]);
+const candidateHistoryLoaded = ref(false);
 const ocrBlocks = ref<OCRBlock[]>([]);
 const busy = ref(false);
 const loadError = ref("");
@@ -112,6 +114,9 @@ const jobs = computed(() =>
 const selectedJob = computed(() => jobs.value.find((item) => item.id === selectedJobId.value) ?? null);
 const selectedCandidate = computed(
   () => candidates.value.find((candidate) => candidate.id === selectedCandidateId.value) ?? null,
+);
+const pendingCandidateCount = computed(
+  () => candidates.value.filter((candidate) => candidate.candidate_state === "pending_review" && !candidate.archived_at).length,
 );
 const selectedSourceAsset = computed(() => {
   const sourceId = selectedCandidate.value?.sources.find(
@@ -159,6 +164,10 @@ function errorMessage(error: unknown): string {
   return "请求失败";
 }
 
+function setHistoryErrorForJob(jobId: number, message: string) {
+  if (selectedJobId.value === jobId) historyError.value = message;
+}
+
 async function loadSources() {
   loadError.value = "";
   try {
@@ -184,12 +193,12 @@ async function waitForJob(jobId: number): Promise<IngestionJob | null> {
         return response.job;
       }
     } catch (error) {
-      historyError.value = "无法读取导入任务状态：" + errorMessage(error);
+      setHistoryErrorForJob(jobId, "无法读取导入任务状态：" + errorMessage(error));
       return null;
     }
     await new Promise((resolve) => window.setTimeout(resolve, 500));
   }
-  historyError.value = "任务仍在运行，可稍后重新打开查看状态。";
+  setHistoryErrorForJob(jobId, "任务仍在运行，可稍后重新打开查看状态。");
   return null;
 }
 
@@ -222,14 +231,14 @@ async function processQueuedJobs(jobIds: number[]) {
 async function resumeJob(jobId: number) {
   if (busy.value) return;
   busy.value = true;
-  historyError.value = "";
+  if (selectedJobId.value === jobId) historyError.value = "";
   try {
     const response = await request<{ job: IngestionJob }>("/api/v1/ingestions/" + jobId);
     setJob(response.job);
     if (response.job.status === "queued") await runJob(jobId);
     else if (response.job.status === "running") await waitForJob(jobId);
   } catch (error) {
-    historyError.value = "无法继续导入任务：" + errorMessage(error);
+    setHistoryErrorForJob(jobId, "无法继续导入任务：" + errorMessage(error));
   } finally {
     busy.value = false;
   }
@@ -277,6 +286,7 @@ async function openJob(
   selectedCandidateId.value = null;
   selectedSourceId.value = null;
   candidates.value = [];
+  candidateHistoryLoaded.value = false;
   ocrBlocks.value = [];
   manualCreateOpen.value = false;
   manualBlockIds.value = [];
@@ -289,6 +299,7 @@ async function openJob(
     ]);
     if (requestRevision !== jobLoadRevision) return;
     candidates.value = candidateRows;
+    candidateHistoryLoaded.value = true;
     ocrBlocks.value = blocks;
     const preferred = candidateRows.find((candidate) => candidate.id === preferredCandidateId);
     const nextPending = candidateRows.find(
@@ -355,7 +366,7 @@ async function createManualCandidate() {
     );
     await refreshCurrentJob(candidate.id, candidate.sources[0]?.question_source_id ?? null, jobId);
   } catch (error) {
-    historyError.value = conflictMessage(error, "导入任务状态已变化，请刷新后重试。");
+    setHistoryErrorForJob(jobId, conflictMessage(error, "导入任务状态已变化，请刷新后重试。"));
   } finally {
     candidateBusy.value = false;
   }
@@ -379,11 +390,12 @@ async function patchCandidate(payload: Record<string, unknown>) {
     );
     await refreshCurrentJob(candidateId, sourceId, jobId);
   } catch (error) {
+    if (selectedJobId.value !== jobId) return;
     if (error instanceof ApiError && error.status === 409) {
       await refreshCurrentJob(candidateId, sourceId, jobId);
-      historyError.value = "候选内容已被其他操作更新，请刷新后重试。";
+      setHistoryErrorForJob(jobId, "候选内容已被其他操作更新，请刷新后重试。");
     } else {
-      historyError.value = errorMessage(error);
+      setHistoryErrorForJob(jobId, errorMessage(error));
     }
   } finally {
     candidateBusy.value = false;
@@ -419,11 +431,12 @@ async function splitCandidate(payload: Record<string, unknown>) {
       jobId,
     );
   } catch (error) {
+    if (selectedJobId.value !== jobId) return;
     if (error instanceof ApiError && error.status === 409) {
       await refreshCurrentJob(candidateId, sourceId, jobId);
-      historyError.value = "候选内容已变化，请刷新后重试。";
+      setHistoryErrorForJob(jobId, "候选内容已变化，请刷新后重试。");
     } else {
-      historyError.value = errorMessage(error);
+      setHistoryErrorForJob(jobId, errorMessage(error));
     }
   } finally {
     candidateBusy.value = false;
@@ -451,18 +464,19 @@ async function candidateDisposition(
     );
     await refreshCurrentJob(candidateId, sourceId, jobId);
   } catch (error) {
+    if (selectedJobId.value !== jobId) return;
     if (error instanceof ApiError && error.status === 409) {
       await refreshCurrentJob(candidateId, sourceId, jobId);
-      historyError.value = "候选内容已变化，请刷新后重试。";
+      setHistoryErrorForJob(jobId, "候选内容已变化，请刷新后重试。");
     } else if (
       action === "confirm" &&
       error instanceof ApiError &&
       error.status === 400 &&
       (error.fields.topic_ids || error.fields.tag_ids)
     ) {
-      historyError.value = "候选题关联的分类已停用或无效，请重新选择有效 Topic/Tag 后再确认。";
+      setHistoryErrorForJob(jobId, "候选题关联的分类已停用或无效，请重新选择有效 Topic/Tag 后再确认。");
     } else {
-      historyError.value = errorMessage(error);
+      setHistoryErrorForJob(jobId, errorMessage(error));
     }
   } finally {
     candidateBusy.value = false;
@@ -508,11 +522,12 @@ async function mergeCandidates() {
       jobId,
     );
   } catch (error) {
+    if (selectedJobId.value !== jobId) return;
     if (error instanceof ApiError && error.status === 409) {
       await refreshCurrentJob(survivorId, sourceId, jobId);
-      historyError.value = "候选内容已变化，请刷新后重试。";
+      setHistoryErrorForJob(jobId, "候选内容已变化，请刷新后重试。");
     } else {
-      historyError.value = errorMessage(error);
+      setHistoryErrorForJob(jobId, errorMessage(error));
     }
   } finally {
     candidateBusy.value = false;
@@ -576,7 +591,7 @@ onMounted(loadSources);
               :aria-label="'打开导入任务 ' + job.id"
               @click="openHistoricalJob(job.id)"
             >
-              任务 {{ job.id }} · {{ job.status }} · {{ job.stage }} · 候选 {{ job.candidate_count }}
+              任务 {{ job.id }} · {{ job.status }} · {{ job.stage }} · 自动候选 {{ job.candidate_count }}
             </button>
             <button
               v-if="job.status === 'queued' || job.status === 'running'"
@@ -686,6 +701,9 @@ onMounted(loadSources);
           </span>
         </li>
       </ul>
+      <p v-if="candidateHistoryLoaded" aria-label="候选数量统计">
+        历史候选 {{ candidates.length }} · 待确认 {{ pendingCandidateCount }}
+      </p>
       <p v-if="selectedCandidate && selectedCandidate.candidate_state !== 'pending_review'">
         此候选已完成审核，只能查看历史来源证据。
       </p>

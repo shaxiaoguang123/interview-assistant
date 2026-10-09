@@ -2,6 +2,7 @@ import { flushPromises, mount } from "@vue/test-utils";
 import { defineComponent, h } from "vue";
 import { describe, expect, it, vi } from "vitest";
 import { createMemoryHistory } from "vue-router";
+import SourceImageViewer from "../src/components/SourceImageViewer.vue";
 import { createAppRouter } from "../src/router";
 
 const RouterLinkStub = defineComponent({
@@ -345,6 +346,48 @@ describe("screenshot inbox and OCR viewer", () => {
     expect(wrapper.get("[aria-label='查看候选题 202']").attributes("aria-pressed")).toBe("true");
   });
 
+  it("does not show a delayed Job A conflict while Job B is selected", async () => {
+    loadComponent(uploadGlob, "missing SourceUpload.vue");
+    const Page = loadComponent(inboxGlob, "missing InboxPage.vue");
+    const records = [source(1, [job(11, "succeeded", 1), job(12, "succeeded", 1)])];
+    const delayedPatch = deferred<Response>();
+    const candidateC = { ...candidateA, id: 201, text: "Job 12 candidate C" };
+    const candidateD = { ...candidateB, id: 202, text: "Job 12 candidate D" };
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = String(input);
+      if (path === "/api/v1/sources") return { ok: true, status: 200, json: async () => records } as Response;
+      if (path === "/api/v1/topics" || path === "/api/v1/tags") return { ok: true, status: 200, json: async () => [] } as Response;
+      if (path === "/api/v1/ingestions/11/candidates") return { ok: true, status: 200, json: async () => [candidateA] } as Response;
+      if (path === "/api/v1/ingestions/11/ocr-blocks") return { ok: true, status: 200, json: async () => candidateA.sources[0].ocr_blocks } as Response;
+      if (path === "/api/v1/ingestions/12/candidates") return { ok: true, status: 200, json: async () => [candidateC, candidateD] } as Response;
+      if (path === "/api/v1/ingestions/12/ocr-blocks") return { ok: true, status: 200, json: async () => candidateA.sources[0].ocr_blocks } as Response;
+      if (path === "/api/v1/ingestion-candidates/101" && init?.method === "PATCH") return delayedPatch.promise;
+      return { ok: true, status: 200, json: async () => ({}) } as Response;
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const wrapper = mount(Page, { global: { stubs: { RouterLink: RouterLinkStub } } });
+    await flushPromises();
+    await wrapper.get("[aria-label='打开导入任务 11']").trigger("click");
+    await flushPromises();
+    await wrapper.get("textarea[aria-label='候选题正文']").setValue("Delayed edit from job 11");
+    const saveRequest = wrapper.get("form[aria-label='候选题正文与分类']").trigger("submit.prevent");
+    await flushPromises();
+    await wrapper.get("[aria-label='打开导入任务 12']").trigger("click");
+    await flushPromises();
+    await wrapper.get("[aria-label='查看候选题 202']").trigger("click");
+    delayedPatch.resolve({
+      ok: false,
+      status: 409,
+      json: async () => ({ error: { code: "CONFLICT", message: "Conflict", fields: {} } }),
+    } as Response);
+    await saveRequest;
+    await flushPromises();
+
+    expect(wrapper.get("[aria-label='导入任务详情']").text()).toContain("任务 12");
+    expect(wrapper.get("[aria-label='查看候选题 202']").attributes("aria-pressed")).toBe("true");
+    expect(wrapper.find("[role='alert']").exists()).toBe(false);
+  });
+
   it("shows all candidates when opening a historical OCR job", async () => {
     loadComponent(uploadGlob, "missing SourceUpload.vue");
     const Page = loadComponent(inboxGlob, "missing InboxPage.vue");
@@ -384,9 +427,39 @@ describe("screenshot inbox and OCR viewer", () => {
     expect(wrapper.find("[aria-label='OCR 原文']").exists()).toBe(true);
   });
 
+  it("separates automatic candidate count from the full reviewed history", async () => {
+    loadComponent(uploadGlob, "missing SourceUpload.vue");
+    const Page = loadComponent(inboxGlob, "missing InboxPage.vue");
+    const records = [source(1, [{ ...job(11, "succeeded", 1), stage: "completed", candidate_count: 4 }])];
+    const candidates = [
+      { ...candidateA, id: 101 },
+      { ...candidateA, id: 102 },
+      { ...candidateA, id: 103 },
+      { ...candidateA, id: 104 },
+      { ...candidateA, id: 105, candidate_state: "confirmed", status: "active" },
+      { ...candidateA, id: 106, candidate_state: "superseded", archived_at: "now" },
+    ];
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const path = String(input);
+      if (path === "/api/v1/sources") return { ok: true, status: 200, json: async () => records } as Response;
+      if (path === "/api/v1/topics" || path === "/api/v1/tags") return { ok: true, status: 200, json: async () => [] } as Response;
+      if (path === "/api/v1/ingestions/11/candidates") return { ok: true, status: 200, json: async () => candidates } as Response;
+      if (path === "/api/v1/ingestions/11/ocr-blocks") return { ok: true, status: 200, json: async () => candidateA.sources[0].ocr_blocks } as Response;
+      return { ok: true, status: 200, json: async () => ({}) } as Response;
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const wrapper = mount(Page, { global: { stubs: { RouterLink: RouterLinkStub } } });
+    await flushPromises();
+    await wrapper.get("[aria-label='打开导入任务 11']").trigger("click");
+    await flushPromises();
+
+    expect(wrapper.get("[aria-label='打开导入任务 11']").text()).toContain("自动候选 4");
+    expect(wrapper.get("[aria-label='候选数量统计']").text()).toContain("历史候选 6");
+    expect(wrapper.get("[aria-label='候选数量统计']").text()).toContain("待确认 4");
+  });
+
   it("selects a QuestionSource by id and switches the displayed SourceAsset", async () => {
-    const Viewer = loadComponent(viewerGlob, "missing SourceImageViewer.vue");
-    const wrapper = mount(Viewer, {
+    const wrapper = mount(SourceImageViewer, {
       props: {
         sources: [candidateA.sources[0], candidateB.sources[0]],
         selectedSourceId: 501,
@@ -821,7 +894,7 @@ describe("screenshot inbox and OCR viewer", () => {
 
     expect(wrapper.get("[aria-label='查看候选题 102']").attributes("aria-pressed")).toBe("true");
     expect(wrapper.get("[aria-label='来源区域 502']").attributes("aria-pressed")).toBe("true");
-    expect(wrapper.get("textarea[aria-label='候选题正文']").element.value).toBe("Edited text");
+    expect((wrapper.get("textarea[aria-label='候选题正文']").element as HTMLTextAreaElement).value).toBe("Edited text");
   });
 
   it("keeps the 409 conflict message visible after refreshing the job", async () => {
@@ -930,7 +1003,7 @@ describe("screenshot inbox and OCR viewer", () => {
     await flushPromises();
 
     expect(wrapper.get("[aria-label='查看候选题 102']").attributes("aria-pressed")).toBe("true");
-    expect(wrapper.get("textarea[aria-label='候选题正文']").element.value).toBe("First split part");
+    expect((wrapper.get("textarea[aria-label='候选题正文']").element as HTMLTextAreaElement).value).toBe("First split part");
   });
 
   it("explains that inactive taxonomy must be replaced before candidate confirmation", async () => {
