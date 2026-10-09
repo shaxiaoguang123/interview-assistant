@@ -221,10 +221,13 @@ def test_adapter_initialization_failure_for_one_job_does_not_poison_another(app)
     assert calls == [1, 2]
 
 
-def test_non_queued_run_returns_conflict(client):
+def test_non_queued_run_returns_conflict(client, app):
+    adapter = _fake_adapter()
+    app.config["OCR_ADAPTER_FACTORY"] = lambda: adapter
     _ingestion_api()
     _, job = _upload_source(client)
     client.post(f"/api/v1/ingestions/{job['id']}/run")
+    assert app.extensions["ocr_adapter"] is adapter
 
     repeated = client.post(f"/api/v1/ingestions/{job['id']}/run")
 
