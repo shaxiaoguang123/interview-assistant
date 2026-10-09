@@ -22,6 +22,7 @@ from app.services.questions import (
     update_question_state,
 )
 from app.services.search import search_questions
+from app.services.question_merge import merge_question, preview_question_merge
 
 
 blueprint = Blueprint("questions_v1", __name__, url_prefix="/api/v1")
@@ -52,6 +53,9 @@ def _question_json(question):
         "answer_type": question.answer_type,
         "difficulty": question.difficulty,
         "status": question.status,
+        "canonical_question_id": question.merged_into_question_id or (
+            question.id if question.status == "active" else None
+        ),
         "archived_at": question.archived_at.isoformat() if question.archived_at else None,
         "created_at": question.created_at.isoformat() if question.created_at else None,
         "updated_at": question.updated_at.isoformat() if question.updated_at else None,
@@ -134,6 +138,20 @@ def patch_question_relation(relation_id: int):
     return jsonify(review_question_relation(
         get_session(), relation_id, request.get_json(silent=True)
     ))
+
+
+@blueprint.get("/questions/<int:canonical_id>/merge-preview")
+def get_question_merge_preview(canonical_id: int):
+    values = request.args.getlist("source_question_id")
+    if len(values) != 1 or not values[0].isascii() or not values[0].isdecimal() or int(values[0]) <= 0:
+        raise ApiError(400, "VALIDATION_ERROR", "source_question_id must be one positive integer")
+    return jsonify(preview_question_merge(get_session(), canonical_id, int(values[0])))
+
+
+@blueprint.post("/questions/<int:canonical_id>/merge")
+def post_question_merge(canonical_id: int):
+    result = merge_question(get_session(), canonical_id, request.get_json(silent=True))
+    return jsonify(_question_json(result))
 
 
 @blueprint.patch("/questions/<int:question_id>")

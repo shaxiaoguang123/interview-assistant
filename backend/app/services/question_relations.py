@@ -175,8 +175,6 @@ def _validate_decision(payload: object) -> dict:
         raise ApiError(400, "VALIDATION_ERROR", "Invalid relation_type")
     if not isinstance(decision, str) or decision not in {"suggested", "accepted", "rejected"}:
         raise ApiError(400, "VALIDATION_ERROR", "Invalid decision_status")
-    if decision == "accepted" and relation_type == "same_question":
-        raise ApiError(400, "VALIDATION_ERROR", "Same-question acceptance requires the future canonical merge workflow")
     if decision == "suggested" and relation_type != "same_question":
         raise ApiError(400, "VALIDATION_ERROR", "Related/different classification requires an explicit decision")
     token = payload["expected_review_token"]

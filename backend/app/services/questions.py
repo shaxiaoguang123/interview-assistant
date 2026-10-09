@@ -15,6 +15,7 @@ from app.services.question_similarity import (
     refresh_rule_suggestions,
 )
 from app.services.taxonomy import validate_active_tag_ids, validate_active_topic_ids
+from app.services.question_relations import _begin_write
 
 
 MAX_QUESTION_TEXT_LENGTH = 10_000
@@ -107,6 +108,11 @@ def create_question(session: Session, payload: dict) -> Question:
 
 
 def _reject_generic_ocr_candidate_operation(question: Question) -> None:
+    if question.status == "merged" or question.merged_into_question_id is not None:
+        raise ApiError(
+            409, "CONFLICT", "Merged child is read-only; open the canonical Question",
+            {"canonical_question_id": str(question.merged_into_question_id)},
+        )
     if question.status == "pending_review" or (
         question.origin_ingestion_job_id is not None
         and question.ingestion_candidate_state != "confirmed"
@@ -128,6 +134,7 @@ def update_question(session: Session, question_id: int, payload: dict) -> Questi
 
     try:
         with session.begin():
+            _begin_write(session)
             question = question_repository.get_question(session, question_id)
             if question is None:
                 raise ApiError(404, "NOT_FOUND", "Question not found")
@@ -195,6 +202,7 @@ def list_questions(
 def archive_question(session: Session, question_id: int) -> Question:
     try:
         with session.begin():
+            _begin_write(session)
             question = question_repository.get_question(session, question_id)
             if question is None:
                 raise ApiError(404, "NOT_FOUND", "Question not found")
@@ -220,6 +228,7 @@ def update_question_state(session: Session, question_id: int, payload: dict) -> 
             raise ApiError(400, "VALIDATION_ERROR", "Invalid question state", {field: "Must be a boolean"})
 
     with session.begin():
+        _begin_write(session)
         question = question_repository.get_question(session, question_id)
         if question is None:
             raise ApiError(404, "NOT_FOUND", "Question not found")

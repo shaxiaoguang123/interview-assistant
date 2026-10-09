@@ -149,16 +149,19 @@ def test_explicit_review_allows_confirmation_without_changing_evidence_or_histor
     assert client.get(f"/api/v1/questions/{candidate['id']}/sources").get_json() == sources_before
 
 
-def test_same_question_acceptance_is_unavailable_until_merge_support(client, duplicate_candidate):
+def test_same_question_acceptance_requires_review_token_and_keeps_candidate_pending(client, duplicate_candidate):
     _, candidate = duplicate_candidate
     relation = _read(client, candidate["id"])["candidates"][0]
-    assert _patch(client, candidate["id"], relation, "same_question", "accepted").status_code == 400
-    assert _read(client, candidate["id"])["candidates"][0] == relation
     assert _patch(client, candidate["id"], relation, "related_question", "suggested").status_code == 400
     # Keeping a suggestion for later is legal and does not generate a new token.
     kept = _patch(client, candidate["id"], relation, "same_question", "suggested")
     assert kept.status_code == 200
     assert kept.get_json() == relation
+    accepted = _patch(client, candidate["id"], relation, "same_question", "accepted")
+    assert accepted.status_code == 200
+    assert accepted.get_json()["suggested_by"] == "user"
+    assert _read(client, candidate["id"])["confirmation_blocked"] is True
+    assert client.get(f"/api/v1/questions/{candidate['id']}").get_json()["status"] == "pending_review"
 
 
 def test_old_browser_decision_cannot_overwrite_a_new_review(client, duplicate_candidate):
