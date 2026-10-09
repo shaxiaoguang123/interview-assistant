@@ -397,6 +397,9 @@ describe("screenshot inbox and OCR viewer", () => {
       if (path === "/api/v1/sources") {
         return { ok: true, status: 200, json: async () => records } as Response;
       }
+      if (path === "/api/v1/topics" || path === "/api/v1/tags") {
+        return { ok: true, status: 200, json: async () => [] } as Response;
+      }
       if (path === "/api/v1/ingestions/11/candidates") {
         return {
           ok: true,
