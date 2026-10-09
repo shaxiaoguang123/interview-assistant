@@ -38,6 +38,71 @@ function deferred<T>() {
   return { promise, resolve };
 }
 
+type ReviewRating = "dont_know" | "vague" | "basic" | "proficient";
+
+interface ReviewFixture {
+  id: number;
+  question_id: number;
+  session_item_id: number;
+  review_rating: ReviewRating;
+  reviewed_at: string;
+  created_at: string;
+  updated_at: string;
+}
+
+function makeReview(id: number, questionId: number, rating: ReviewRating): ReviewFixture {
+  const timestamp = "2026-10-09T00:00:00Z";
+  return {
+    id,
+    question_id: questionId,
+    session_item_id: id,
+    review_rating: rating,
+    reviewed_at: timestamp,
+    created_at: timestamp,
+    updated_at: timestamp,
+  };
+}
+
+function jsonResponse<T>(body: T, status = 200): Response {
+  return { ok: status >= 200 && status < 300, status, json: async () => body } as Response;
+}
+
+function questionFetchMock(
+  override: (path: string, init?: RequestInit) => Response | Promise<Response> | undefined = () => undefined,
+  reviewRows: Record<number, ReviewFixture[]> = {},
+): typeof fetch {
+  return vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const path = String(input);
+    const custom = override(path, init);
+    if (custom) return custom;
+    if (path === "/api/v1/topics" || path === "/api/v1/tags") return jsonResponse([]);
+    const detail = path.match(/^\/api\/v1\/questions\/(\d+)$/);
+    if (detail && (init?.method ?? "GET") === "GET") {
+      const id = Number(detail[1]);
+      return jsonResponse(makeQuestion(id, id === 1 ? "Question A" : `Question ${id}`));
+    }
+    const reviews = path.match(/^\/api\/v1\/questions\/(\d+)\/practice-reviews$/);
+    if (reviews) return jsonResponse(reviewRows[Number(reviews[1])] ?? []);
+    if (/^\/api\/v1\/questions\/\d+\/sources$/.test(path)) return jsonResponse([]);
+    throw new Error(`Unexpected request: ${String(init?.method ?? "GET")} ${path}`);
+  }) as typeof fetch;
+}
+
+async function mountQuestionDetail(fetchMock: typeof fetch, questionId = 1) {
+  const pageModules = import.meta.glob("../src/pages/QuestionDetailPage.vue", { eager: true });
+  const pageModule = pageModules["../src/pages/QuestionDetailPage.vue"] as
+    | { default?: object }
+    | undefined;
+  expect(pageModule, "missing feature: QuestionDetailPage.vue").toBeDefined();
+  vi.stubGlobal("fetch", fetchMock);
+  const router = createAppRouter(createMemoryHistory());
+  await router.push(`/questions/${questionId}`);
+  await router.isReady();
+  const wrapper = mount(pageModule!.default!, { global: { plugins: [router] } });
+  await flushPromises();
+  return { wrapper, router };
+}
+
 describe("manual question bank", () => {
   it("searches a query and renders matching questions", async () => {
     const pageModules = import.meta.glob("../src/pages/QuestionBankPage.vue", { eager: true });
@@ -624,5 +689,188 @@ describe("manual question bank", () => {
     expect(wrapper.get("[aria-label='题目来源证据']").text()).toContain("Question B source");
     expect(wrapper.get("[aria-label='题目来源证据']").text()).not.toContain("Delayed Question A source");
     expect(wrapper.find("[aria-label='题目来源加载失败']").exists()).toBe(false);
+  });
+
+  it("ignores a successful save response from the previous question", async () => {
+    const oldSave = deferred<Response>();
+    const fetchMock = questionFetchMock((path, init) => {
+      if (path === "/api/v1/questions/1" && init?.method === "PATCH") return oldSave.promise;
+      return undefined;
+    });
+    const { wrapper, router } = await mountQuestionDetail(fetchMock);
+
+    await wrapper.get("textarea[aria-label='题目正文']").setValue("Edited A");
+    const saveRequest = wrapper.get("form[aria-label='题目表单']").trigger("submit.prevent");
+    await flushPromises();
+    await router.push("/questions/2");
+    await flushPromises();
+    expect((wrapper.get("textarea[aria-label='题目正文']").element as HTMLTextAreaElement).value).toBe("Question 2");
+
+    oldSave.resolve(jsonResponse(makeQuestion(1, "Stale A response")));
+    await saveRequest;
+    await flushPromises();
+
+    expect((wrapper.get("textarea[aria-label='题目正文']").element as HTMLTextAreaElement).value).toBe("Question 2");
+    expect(wrapper.find("[role='alert']").exists()).toBe(false);
+  });
+
+  it("does not show a save error from the previous question", async () => {
+    const oldSave = deferred<Response>();
+    const fetchMock = questionFetchMock((path, init) => {
+      if (path === "/api/v1/questions/1" && init?.method === "PATCH") return oldSave.promise;
+      return undefined;
+    });
+    const { wrapper, router } = await mountQuestionDetail(fetchMock);
+
+    await wrapper.get("textarea[aria-label='题目正文']").setValue("Edited A");
+    const saveRequest = wrapper.get("form[aria-label='题目表单']").trigger("submit.prevent");
+    await flushPromises();
+    await router.push("/questions/2");
+    await flushPromises();
+    oldSave.resolve(jsonResponse({
+      error: { code: "CONFLICT", message: "Stale Question A conflict", fields: {} },
+    }, 409));
+    await saveRequest;
+    await flushPromises();
+
+    expect((wrapper.get("textarea[aria-label='题目正文']").element as HTMLTextAreaElement).value).toBe("Question 2");
+    expect(wrapper.find("[role='alert']").exists()).toBe(false);
+  });
+
+  it("does not apply a stale favorite response to the newly selected question", async () => {
+    const oldState = deferred<Response>();
+    const fetchMock = questionFetchMock((path, init) => {
+      if (path === "/api/v1/questions/1/state" && init?.method === "PATCH") return oldState.promise;
+      return undefined;
+    });
+    const { wrapper, router } = await mountQuestionDetail(fetchMock);
+
+    const stateRequest = wrapper.get("button").trigger("click");
+    await flushPromises();
+    await router.push("/questions/2");
+    await flushPromises();
+    oldState.resolve(jsonResponse({
+      question_id: 1,
+      is_favorite: true,
+      is_wrong: false,
+      user_note: null,
+    }));
+    await stateRequest;
+    await flushPromises();
+
+    expect(wrapper.get("button").text()).toBe("收藏");
+    expect(wrapper.find("button").text()).not.toBe("取消收藏");
+    expect(wrapper.find("[role='alert']").exists()).toBe(false);
+  });
+
+  it("does not apply an old archive response to the newly selected question", async () => {
+    const oldArchive = deferred<Response>();
+    const fetchMock = questionFetchMock((path, init) => {
+      if (path === "/api/v1/questions/1/archive" && init?.method === "POST") return oldArchive.promise;
+      return undefined;
+    });
+    const { wrapper, router } = await mountQuestionDetail(fetchMock);
+
+    const archiveButton = wrapper.findAll("button").find((button) => button.text() === "归档");
+    expect(archiveButton).toBeDefined();
+    const archiveRequest = archiveButton!.trigger("click");
+    await flushPromises();
+    await router.push("/questions/2");
+    await flushPromises();
+    oldArchive.resolve(jsonResponse(makeQuestion(1, "Archived A", "2026-10-09T00:00:00Z")));
+    await archiveRequest;
+    await flushPromises();
+
+    expect((wrapper.get("textarea[aria-label='题目正文']").element as HTMLTextAreaElement).value).toBe("Question 2");
+    expect(wrapper.text()).not.toContain("已归档");
+    expect(wrapper.findAll("button").some((button) => button.text() === "归档")).toBe(true);
+  });
+
+  it("does not surface a stale PracticeReview error on another question", async () => {
+    const reviewA = makeReview(301, 1, "dont_know");
+    const reviewB = makeReview(302, 2, "vague");
+    const oldReviewPatch = deferred<Response>();
+    const fetchMock = questionFetchMock((path, init) => {
+      if (path === "/api/v1/practice-reviews/301" && init?.method === "PATCH") return oldReviewPatch.promise;
+      return undefined;
+    }, { 1: [reviewA], 2: [reviewB] });
+    const { wrapper, router } = await mountQuestionDetail(fetchMock);
+
+    await wrapper.get("select[aria-label='更正掌握度 301']").setValue("basic");
+    const correctionRequest = wrapper.get("button[aria-label='保存自评 301']").trigger("click");
+    await flushPromises();
+    await router.push("/questions/2");
+    await flushPromises();
+    oldReviewPatch.resolve(jsonResponse({
+      error: { code: "CONFLICT", message: "Stale review conflict", fields: {} },
+    }, 409));
+    await correctionRequest;
+    await flushPromises();
+
+    expect(wrapper.get("[data-review-id='302']").text()).toContain("模糊");
+    expect((wrapper.get("select[aria-label='更正掌握度 302']").element as HTMLSelectElement).value).toBe("vague");
+    expect(wrapper.find("[role='alert']").exists()).toBe(false);
+  });
+
+  it("keeps the second A load when the first A mutation returns after A to B to A", async () => {
+    const oldSave = deferred<Response>();
+    let questionALoads = 0;
+    const fetchMock = questionFetchMock((path, init) => {
+      if (path === "/api/v1/questions/1" && init?.method === "PATCH") return oldSave.promise;
+      if (path === "/api/v1/questions/1" && (init?.method ?? "GET") === "GET") {
+        questionALoads += 1;
+        return jsonResponse(makeQuestion(1, questionALoads === 1 ? "Question A first load" : "Question A latest load"));
+      }
+      return undefined;
+    });
+    const { wrapper, router } = await mountQuestionDetail(fetchMock);
+
+    await wrapper.get("textarea[aria-label='题目正文']").setValue("Edited in first A visit");
+    const saveRequest = wrapper.get("form[aria-label='题目表单']").trigger("submit.prevent");
+    await flushPromises();
+    await router.push("/questions/2");
+    await flushPromises();
+    await router.push("/questions/1");
+    await flushPromises();
+    expect((wrapper.get("textarea[aria-label='题目正文']").element as HTMLTextAreaElement).value).toBe("Question A latest load");
+
+    oldSave.resolve(jsonResponse(makeQuestion(1, "Stale first A response")));
+    await saveRequest;
+    await flushPromises();
+
+    expect((wrapper.get("textarea[aria-label='题目正文']").element as HTMLTextAreaElement).value).toBe("Question A latest load");
+  });
+
+  it("applies state, archive, and PracticeReview writes while staying on the same question", async () => {
+    let review = makeReview(401, 1, "dont_know");
+    const fetchMock = questionFetchMock((path, init) => {
+      if (path === "/api/v1/questions/1/state" && init?.method === "PATCH") {
+        return jsonResponse({ question_id: 1, is_favorite: true, is_wrong: false, user_note: null });
+      }
+      if (path === "/api/v1/questions/1/archive" && init?.method === "POST") {
+        return jsonResponse(makeQuestion(1, "Question A", "2026-10-09T00:00:00Z"));
+      }
+      if (path === "/api/v1/practice-reviews/401" && init?.method === "PATCH") {
+        review = { ...review, review_rating: "basic" };
+        return jsonResponse(review);
+      }
+      return undefined;
+    }, { 1: [review] });
+    const { wrapper } = await mountQuestionDetail(fetchMock);
+
+    await wrapper.get("button").trigger("click");
+    await flushPromises();
+    expect(wrapper.find("button").text()).toBe("取消收藏");
+    const archiveButton = wrapper.findAll("button").find((button) => button.text() === "归档");
+    expect(archiveButton).toBeDefined();
+    await archiveButton!.trigger("click");
+    await flushPromises();
+    expect(wrapper.text()).toContain("已归档");
+    await wrapper.get("select[aria-label='更正掌握度 401']").setValue("basic");
+    await wrapper.get("button[aria-label='保存自评 401']").trigger("click");
+    await flushPromises();
+
+    expect(wrapper.get("[data-review-id='401']").text()).toContain("基本会");
+    expect((wrapper.get("select[aria-label='更正掌握度 401']").element as HTMLSelectElement).value).toBe("basic");
   });
 });

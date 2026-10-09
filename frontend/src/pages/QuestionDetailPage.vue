@@ -112,6 +112,14 @@ function sameIds(left: number[], right: number[]): boolean {
   return left.length === right.length && left.every((id) => right.includes(id));
 }
 
+function isCurrentQuestionRequest(requestedQuestionId: number, requestRevision: number): boolean {
+  return (
+    questionId.value === requestedQuestionId &&
+    questionLoadRevision === requestRevision &&
+    question.value?.id === requestedQuestionId
+  );
+}
+
 async function loadQuestion(): Promise<void> {
   const requestedQuestionId = questionId.value;
   const requestRevision = ++questionLoadRevision;
@@ -181,6 +189,8 @@ async function loadQuestionSources(requestedQuestionId = questionId.value): Prom
 async function update(payload: QuestionFormPayload): Promise<void> {
   const currentQuestion = question.value;
   if (!currentQuestion) return;
+  const requestedQuestionId = currentQuestion.id;
+  const requestRevision = questionLoadRevision;
 
   const patch: Partial<QuestionFormPayload> = {
     text: payload.text,
@@ -194,59 +204,93 @@ async function update(payload: QuestionFormPayload): Promise<void> {
 
   errorMessage.value = "";
   try {
-    question.value = await request<QuestionDetail>(`/api/v1/questions/${questionId.value}`, {
+    const updated = await request<QuestionDetail>(`/api/v1/questions/${requestedQuestionId}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(patch),
     });
+    if (!isCurrentQuestionRequest(requestedQuestionId, requestRevision)) return;
+    question.value = updated;
   } catch (error) {
-    errorMessage.value = displayError(error);
+    if (isCurrentQuestionRequest(requestedQuestionId, requestRevision)) {
+      errorMessage.value = displayError(error);
+    }
   }
 }
 
 async function patchState(field: "is_favorite" | "is_wrong"): Promise<void> {
-  if (!question.value) return;
+  const currentQuestion = question.value;
+  if (!currentQuestion) return;
+  const requestedQuestionId = currentQuestion.id;
+  const requestRevision = questionLoadRevision;
+  const nextValue = !currentQuestion.state[field];
   errorMessage.value = "";
   try {
     const state = await request<QuestionDetail["state"]>(
-      `/api/v1/questions/${questionId.value}/state`,
+      `/api/v1/questions/${requestedQuestionId}/state`,
       {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ [field]: !question.value.state[field] }),
+        body: JSON.stringify({ [field]: nextValue }),
       },
     );
-    question.value.state = state;
+    const activeQuestion = question.value;
+    if (!isCurrentQuestionRequest(requestedQuestionId, requestRevision) || !activeQuestion) return;
+    activeQuestion.state = state;
   } catch (error) {
-    errorMessage.value = displayError(error);
+    if (isCurrentQuestionRequest(requestedQuestionId, requestRevision)) {
+      errorMessage.value = displayError(error);
+    }
   }
 }
 
 async function archiveQuestion(): Promise<void> {
+  const currentQuestion = question.value;
+  if (!currentQuestion) return;
+  const requestedQuestionId = currentQuestion.id;
+  const requestRevision = questionLoadRevision;
   errorMessage.value = "";
   try {
-    question.value = await request<QuestionDetail>(`/api/v1/questions/${questionId.value}/archive`, {
+    const archived = await request<QuestionDetail>(`/api/v1/questions/${requestedQuestionId}/archive`, {
       method: "POST",
     });
+    if (!isCurrentQuestionRequest(requestedQuestionId, requestRevision)) return;
+    question.value = archived;
   } catch (error) {
-    errorMessage.value = displayError(error);
+    if (isCurrentQuestionRequest(requestedQuestionId, requestRevision)) {
+      errorMessage.value = displayError(error);
+    }
   }
 }
 
 async function correctReview(review: PracticeReviewItem): Promise<void> {
+  const currentQuestion = question.value;
+  if (!currentQuestion || review.question_id !== currentQuestion.id) return;
+  const requestedQuestionId = currentQuestion.id;
+  const requestRevision = questionLoadRevision;
+  const reviewId = review.id;
+  if (!reviews.value.some((item) => item.id === reviewId)) return;
   const reviewRating = reviewRatingDrafts.value[review.id];
   if (!reviewRating || reviewRating === review.review_rating) return;
   errorMessage.value = "";
   try {
-    const updated = await request<PracticeReviewItem>(`/api/v1/practice-reviews/${review.id}`, {
+    const updated = await request<PracticeReviewItem>(`/api/v1/practice-reviews/${reviewId}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ review_rating: reviewRating }),
     });
-    reviews.value = reviews.value.map((item) => (item.id === updated.id ? updated : item));
+    if (
+      !isCurrentQuestionRequest(requestedQuestionId, requestRevision) ||
+      updated.question_id !== requestedQuestionId ||
+      updated.id !== reviewId ||
+      !reviews.value.some((item) => item.id === reviewId)
+    ) return;
+    reviews.value = reviews.value.map((item) => (item.id === reviewId ? updated : item));
     reviewRatingDrafts.value[updated.id] = updated.review_rating;
   } catch (error) {
-    errorMessage.value = displayError(error);
+    if (isCurrentQuestionRequest(requestedQuestionId, requestRevision)) {
+      errorMessage.value = displayError(error);
+    }
   }
 }
 
