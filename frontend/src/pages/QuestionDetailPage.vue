@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from "vue";
+import { computed, ref, watch } from "vue";
 import { useRoute } from "vue-router";
 import { ApiError, request } from "../api/client";
 import SourceImageViewer from "../components/SourceImageViewer.vue";
@@ -69,6 +69,8 @@ const route = useRoute();
 const question = ref<QuestionDetail | null>(null);
 const reviews = ref<PracticeReviewItem[]>([]);
 const sources = ref<QuestionSourceItem[]>([]);
+const sourceLoading = ref(false);
+const sourceLoadError = ref("");
 const selectedSourceId = ref<number | null>(null);
 const reviewRatingDrafts = ref<Record<number, PracticeReviewItem["review_rating"]>>({});
 const topics = ref<TaxonomyItem[]>([]);
@@ -77,6 +79,8 @@ const errorMessage = ref("");
 const loading = ref(true);
 
 const questionId = computed(() => Number(route.params.id));
+let questionLoadRevision = 0;
+let sourceLoadRevision = 0;
 const selectedSource = computed(
   () => sources.value.find((source) => source.question_source_id === selectedSourceId.value) ?? sources.value[0] ?? null,
 );
@@ -109,42 +113,68 @@ function sameIds(left: number[], right: number[]): boolean {
 }
 
 async function loadQuestion(): Promise<void> {
+  const requestedQuestionId = questionId.value;
+  const requestRevision = ++questionLoadRevision;
+  sourceLoadRevision += 1;
+  sources.value = [];
+  selectedSourceId.value = null;
+  sourceLoading.value = false;
+  sourceLoadError.value = "";
+  question.value = null;
+  reviews.value = [];
+  topics.value = [];
+  tags.value = [];
+  reviewRatingDrafts.value = {};
   loading.value = true;
   errorMessage.value = "";
   try {
     const [questionResult, topicResult, tagResult, reviewRows] = await Promise.all([
-      request<QuestionDetail>(`/api/v1/questions/${questionId.value}`),
+      request<QuestionDetail>(`/api/v1/questions/${requestedQuestionId}`),
       request<TaxonomyItem[]>("/api/v1/topics"),
       request<TaxonomyItem[]>("/api/v1/tags"),
-      request<PracticeReviewItem[]>(`/api/v1/questions/${questionId.value}/practice-reviews`),
+      request<PracticeReviewItem[]>(`/api/v1/questions/${requestedQuestionId}/practice-reviews`),
     ]);
+    if (requestRevision !== questionLoadRevision || requestedQuestionId !== questionId.value) return;
     question.value = questionResult;
     topics.value = mergeHistoricalItems(topicResult, questionResult.topics);
     tags.value = mergeHistoricalItems(tagResult, questionResult.tags);
     reviews.value = reviewRows;
-    void loadQuestionSources();
+    void loadQuestionSources(requestedQuestionId);
     reviewRatingDrafts.value = Object.fromEntries(
       reviewRows.map((review) => [review.id, review.review_rating]),
     );
   } catch (error) {
-    errorMessage.value = displayError(error);
+    if (requestRevision === questionLoadRevision && requestedQuestionId === questionId.value) {
+      errorMessage.value = displayError(error);
+    }
   } finally {
-    loading.value = false;
+    if (requestRevision === questionLoadRevision && requestedQuestionId === questionId.value) {
+      loading.value = false;
+    }
   }
 }
 
-async function loadQuestionSources(): Promise<void> {
+async function loadQuestionSources(requestedQuestionId = questionId.value): Promise<void> {
+  const requestRevision = ++sourceLoadRevision;
+  sourceLoading.value = true;
+  sourceLoadError.value = "";
   try {
     const sourceRows = await request<QuestionSourceItem[]>(
-      "/api/v1/questions/" + questionId.value + "/sources",
+      "/api/v1/questions/" + requestedQuestionId + "/sources",
     );
+    if (requestRevision !== sourceLoadRevision || requestedQuestionId !== questionId.value) return;
     sources.value = sourceRows;
     if (!sourceRows.some((source) => source.question_source_id === selectedSourceId.value)) {
       selectedSourceId.value = sourceRows[0]?.question_source_id ?? null;
     }
-  } catch {
-    sources.value = [];
-    selectedSourceId.value = null;
+  } catch (error) {
+    if (requestRevision === sourceLoadRevision && requestedQuestionId === questionId.value) {
+      sourceLoadError.value = displayError(error);
+    }
+  } finally {
+    if (requestRevision === sourceLoadRevision && requestedQuestionId === questionId.value) {
+      sourceLoading.value = false;
+    }
   }
 }
 
@@ -220,7 +250,7 @@ async function correctReview(review: PracticeReviewItem): Promise<void> {
   }
 }
 
-onMounted(loadQuestion);
+watch(questionId, () => void loadQuestion(), { immediate: true });
 </script>
 
 <template>
@@ -259,23 +289,38 @@ onMounted(loadQuestion);
         :tags="tags"
         @save="update"
       />
-      <section v-if="sources.length" aria-label="题目来源证据">
+      <section aria-label="题目来源证据">
         <h3>截图来源与 OCR 证据</h3>
-        <p v-if="selectedSource">
-          {{ selectedSource.source_title || selectedSource.original_filename || ("截图 " + selectedSource.source_asset_id) }}
-        </p>
-        <SourceImageViewer
-          :sources="sources"
-          :selected-source-id="selectedSourceId"
-          :image-width="selectedSource?.display_width ?? 0"
-          :image-height="selectedSource?.display_height ?? 0"
-          @select-source="selectedSourceId = $event"
-        />
-        <details v-if="selectedSource" aria-label="题目来源 OCR 原文">
-          <summary>查看原始 OCR 文本</summary>
-          <pre>{{ selectedSource.raw_ocr_text_snapshot }}</pre>
-          <p>OCR block：{{ selectedSource.ocr_block_ids.join(", ") }}</p>
-        </details>
+        <p v-if="sourceLoading" role="status">正在加载截图来源…</p>
+        <template v-else-if="sourceLoadError">
+          <p role="alert" aria-label="题目来源加载失败">截图来源加载失败：{{ sourceLoadError }}</p>
+          <button
+            type="button"
+            aria-label="重试加载题目来源"
+            :disabled="sourceLoading"
+            @click="loadQuestionSources()"
+          >
+            重新加载来源
+          </button>
+        </template>
+        <template v-else-if="sources.length">
+          <p v-if="selectedSource">
+            {{ selectedSource.source_title || selectedSource.original_filename || ("截图 " + selectedSource.source_asset_id) }}
+          </p>
+          <SourceImageViewer
+            :sources="sources"
+            :selected-source-id="selectedSourceId"
+            :image-width="selectedSource?.display_width ?? 0"
+            :image-height="selectedSource?.display_height ?? 0"
+            @select-source="selectedSourceId = $event"
+          />
+          <details v-if="selectedSource" aria-label="题目来源 OCR 原文">
+            <summary>查看原始 OCR 文本</summary>
+            <pre>{{ selectedSource.raw_ocr_text_snapshot }}</pre>
+            <p>OCR block：{{ selectedSource.ocr_block_ids.join(", ") }}</p>
+          </details>
+        </template>
+        <p v-else aria-label="暂无截图来源">暂无截图来源</p>
       </section>
       <section aria-labelledby="practice-history-title">
         <h3 id="practice-history-title">练习掌握度历史</h3>

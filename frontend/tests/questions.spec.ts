@@ -30,6 +30,14 @@ function makeQuestion(id: number, text: string, archivedAt: string | null = null
   };
 }
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
+
 describe("manual question bank", () => {
   it("searches a query and renders matching questions", async () => {
     const pageModules = import.meta.glob("../src/pages/QuestionBankPage.vue", { eager: true });
@@ -146,8 +154,8 @@ describe("manual question bank", () => {
 
     expect(wrapper.text()).toContain("Legacy Topic（停用，先移除或替换）");
     expect(wrapper.text()).toContain("Legacy Tag（停用，先移除或替换）");
-    expect(wrapper.get("input[type='checkbox'][value='8']").element.disabled).toBe(false);
-    expect(wrapper.get("input[type='checkbox'][value='9']").element.disabled).toBe(false);
+    expect((wrapper.get("input[type='checkbox'][value='8']").element as HTMLInputElement).disabled).toBe(false);
+    expect((wrapper.get("input[type='checkbox'][value='9']").element as HTMLInputElement).disabled).toBe(false);
   });
 
   it("renders question validation errors from the shared envelope", async () => {
@@ -212,8 +220,9 @@ describe("manual question bank", () => {
           return { ok: true, status: 200, json: async () => [] } as Response;
         }
         if (path === "/api/v1/questions/1" && init?.method === "PATCH") {
-          patchBody = JSON.parse(String(init.body));
-          question = { ...question, text: String(patchBody.text) };
+          const body = JSON.parse(String(init.body)) as Record<string, unknown>;
+          patchBody = body;
+          question = { ...question, text: String(body.text) };
           return { ok: true, status: 200, json: async () => question } as Response;
         }
         throw new Error(`Unexpected request: ${String(init?.method ?? "GET")} ${path}`);
@@ -285,7 +294,7 @@ describe("manual question bank", () => {
     await flushPromises();
 
     expect(wrapper.get("[role='alert']").text()).toContain("Invalid");
-    expect(wrapper.get("form[aria-label='题目表单']").exists()).toBe(true);
+    expect(wrapper.find("form[aria-label='题目表单']").exists()).toBe(true);
     await wrapper.get("textarea[aria-label='题目正文']").setValue("Corrected question");
     await wrapper.get("form[aria-label='题目表单']").trigger("submit.prevent");
     await flushPromises();
@@ -428,8 +437,8 @@ describe("manual question bank", () => {
 
     expect(wrapper.get("[aria-label='题目来源证据']").text()).toContain("What is MCP?");
     expect(wrapper.text()).toContain("1. What is MCP?");
-    expect(wrapper.get("a[href='/api/v1/sources/8/original']").exists()).toBe(true);
-    expect(wrapper.get("[aria-label='截图来源定位']").exists()).toBe(true);
+    expect(wrapper.find("a[href='/api/v1/sources/8/original']").exists()).toBe(true);
+    expect(wrapper.find("[aria-label='截图来源定位']").exists()).toBe(true);
     expect(wrapper.get("[data-source-region-id='91']").attributes("x")).toBe("216");
     expect(wrapper.get("img[alt='EXIF 方向校正后的截图预览']").attributes("src")).toBe(
       "/api/v1/sources/8/display",
@@ -441,6 +450,179 @@ describe("manual question bank", () => {
     );
     expect(wrapper.get("[data-source-region-id='92']").attributes("data-selected")).toBe("true");
     expect(wrapper.get("[aria-label='题目来源证据']").text()).toContain("Other text");
-    expect(wrapper.get("a[href='/api/v1/sources/9/original']").exists()).toBe(true);
+    expect(wrapper.find("a[href='/api/v1/sources/9/original']").exists()).toBe(true);
+  });
+
+  it("distinguishes source API failure from no sources and retries successfully", async () => {
+    const pageModules = import.meta.glob("../src/pages/QuestionDetailPage.vue", { eager: true });
+    const pageModule = pageModules["../src/pages/QuestionDetailPage.vue"] as
+      | { default?: object }
+      | undefined;
+    expect(pageModule).toBeDefined();
+    const sourceRow = {
+      question_source_id: 201,
+      question_id: 1,
+      source_asset_id: 20,
+      source_title: "Recovered screenshot",
+      original_filename: "recovered.png",
+      display_width: 800,
+      display_height: 1200,
+      source_text_snapshot: "Source loaded after retry",
+      raw_ocr_text_snapshot: "Source loaded after retry",
+      locator_json: { x: 0.1, y: 0.2, width: 0.5, height: 0.1 },
+      locator_correction_json: null,
+      ocr_block_ids: [],
+      ocr_blocks: [],
+      original_image_url: "/api/v1/sources/20/original",
+      display_image_url: "/api/v1/sources/20/display",
+    };
+    let sourceAttempts = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const path = String(input);
+        if (path === "/api/v1/questions/1") {
+          return { ok: true, status: 200, json: async () => makeQuestion(1, "Question with source") } as Response;
+        }
+        if (path === "/api/v1/topics" || path === "/api/v1/tags") {
+          return { ok: true, status: 200, json: async () => [] } as Response;
+        }
+        if (path === "/api/v1/questions/1/practice-reviews") {
+          return { ok: true, status: 200, json: async () => [] } as Response;
+        }
+        if (path === "/api/v1/questions/1/sources") {
+          sourceAttempts += 1;
+          if (sourceAttempts === 1) {
+            return {
+              ok: false,
+              status: 503,
+              json: async () => ({ error: { code: "UNAVAILABLE", message: "Source service unavailable" } }),
+            } as Response;
+          }
+          return { ok: true, status: 200, json: async () => [sourceRow] } as Response;
+        }
+        throw new Error("Unexpected request: " + path);
+      }),
+    );
+
+    const router = createAppRouter(createMemoryHistory());
+    await router.push("/questions/1");
+    await router.isReady();
+    const wrapper = mount(pageModule!.default!, { global: { plugins: [router] } });
+    await flushPromises();
+
+    expect(wrapper.get("[aria-label='题目来源加载失败']").text()).toContain("Source service unavailable");
+    expect(wrapper.find("[aria-label='暂无截图来源']").exists()).toBe(false);
+    await wrapper.get("button[aria-label='重试加载题目来源']").trigger("click");
+    await flushPromises();
+
+    expect(sourceAttempts).toBe(2);
+    expect(wrapper.find("[data-source-asset-id='20']").exists()).toBe(true);
+    expect(wrapper.get("[aria-label='题目来源证据']").text()).toContain("Source loaded after retry");
+    expect(wrapper.find("[aria-label='题目来源加载失败']").exists()).toBe(false);
+  });
+
+  it("shows a real empty-source state for a manual question", async () => {
+    const pageModules = import.meta.glob("../src/pages/QuestionDetailPage.vue", { eager: true });
+    const pageModule = pageModules["../src/pages/QuestionDetailPage.vue"] as
+      | { default?: object }
+      | undefined;
+    expect(pageModule).toBeDefined();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const path = String(input);
+        if (path === "/api/v1/questions/1") {
+          return { ok: true, status: 200, json: async () => makeQuestion(1, "Manual question") } as Response;
+        }
+        if (path === "/api/v1/topics" || path === "/api/v1/tags") {
+          return { ok: true, status: 200, json: async () => [] } as Response;
+        }
+        if (path === "/api/v1/questions/1/practice-reviews") {
+          return { ok: true, status: 200, json: async () => [] } as Response;
+        }
+        if (path === "/api/v1/questions/1/sources") {
+          return { ok: true, status: 200, json: async () => [] } as Response;
+        }
+        throw new Error("Unexpected request: " + path);
+      }),
+    );
+    const router = createAppRouter(createMemoryHistory());
+    await router.push("/questions/1");
+    await router.isReady();
+    const wrapper = mount(pageModule!.default!, { global: { plugins: [router] } });
+    await flushPromises();
+
+    expect(wrapper.get("[aria-label='暂无截图来源']").text()).toBe("暂无截图来源");
+    expect(wrapper.find("[aria-label='截图来源定位']").exists()).toBe(false);
+    expect(wrapper.find("[aria-label='题目来源加载失败']").exists()).toBe(false);
+  });
+
+  it("ignores a delayed source response after navigation to another question", async () => {
+    const pageModules = import.meta.glob("../src/pages/QuestionDetailPage.vue", { eager: true });
+    const pageModule = pageModules["../src/pages/QuestionDetailPage.vue"] as
+      | { default?: object }
+      | undefined;
+    expect(pageModule).toBeDefined();
+    const sourceA = deferred<Response>();
+    const sourceForQuestion = (questionId: number, sourceId: number, text: string) => [{
+      question_source_id: sourceId,
+      question_id: questionId,
+      source_asset_id: sourceId,
+      source_title: text,
+      original_filename: `${sourceId}.png`,
+      display_width: 800,
+      display_height: 1200,
+      source_text_snapshot: text,
+      raw_ocr_text_snapshot: text,
+      locator_json: { x: 0.1, y: 0.2, width: 0.5, height: 0.1 },
+      locator_correction_json: null,
+      ocr_block_ids: [],
+      ocr_blocks: [],
+      original_image_url: `/api/v1/sources/${sourceId}/original`,
+      display_image_url: `/api/v1/sources/${sourceId}/display`,
+    }];
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const path = String(input);
+      const questionMatch = path.match(/^\/api\/v1\/questions\/(\d+)(?:\/([^/]+))?$/);
+      if (questionMatch && !questionMatch[2]) {
+        const id = Number(questionMatch[1]);
+        return { ok: true, status: 200, json: async () => makeQuestion(id, `Question ${id}`) } as Response;
+      }
+      if (path === "/api/v1/topics" || path === "/api/v1/tags") {
+        return { ok: true, status: 200, json: async () => [] } as Response;
+      }
+      const reviews = path.match(/^\/api\/v1\/questions\/(\d+)\/practice-reviews$/);
+      if (reviews) return { ok: true, status: 200, json: async () => [] } as Response;
+      const sources = path.match(/^\/api\/v1\/questions\/(\d+)\/sources$/);
+      if (sources && sources[1] === "1") return sourceA.promise;
+      if (sources && sources[1] === "2") {
+        return { ok: true, status: 200, json: async () => sourceForQuestion(2, 202, "Question B source") } as Response;
+      }
+      throw new Error("Unexpected request: " + path);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const router = createAppRouter(createMemoryHistory());
+    await router.push("/questions/1");
+    await router.isReady();
+    const wrapper = mount(pageModule!.default!, { global: { plugins: [router] } });
+    await flushPromises();
+    expect(fetchMock).toHaveBeenCalledWith("/api/v1/questions/1/sources", expect.anything());
+
+    await router.push("/questions/2");
+    await flushPromises();
+    expect(wrapper.find("[data-source-asset-id='202']").exists()).toBe(true);
+    sourceA.resolve({
+      ok: true,
+      status: 200,
+      json: async () => sourceForQuestion(1, 101, "Delayed Question A source"),
+    } as Response);
+    await flushPromises();
+
+    expect(wrapper.find("[data-source-asset-id='202']").exists()).toBe(true);
+    expect(wrapper.get("[aria-label='题目来源证据']").text()).toContain("Question B source");
+    expect(wrapper.get("[aria-label='题目来源证据']").text()).not.toContain("Delayed Question A source");
+    expect(wrapper.find("[aria-label='题目来源加载失败']").exists()).toBe(false);
   });
 });
