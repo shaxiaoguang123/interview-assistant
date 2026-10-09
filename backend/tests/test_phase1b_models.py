@@ -425,6 +425,69 @@ def utc_now_for_test():
     return datetime.now(timezone.utc)
 
 
+def test_canonical_root_with_children_cannot_be_archived_until_repointed(tmp_path):
+    _phase1b_models()
+    question_model = import_module("app.models.question").Question
+    app = _migrated_app(tmp_path / "archive-canonical-with-child.sqlite3")
+    engine = app.extensions["sqlalchemy_engine"]
+    try:
+        with Session(engine) as session:
+            first_root = _question(id=1, text="First root")
+            second_root = _question(id=2, text="Second root")
+            child = _question(
+                id=3,
+                text="Merged child",
+                status="merged",
+                merged_into_question_id=1,
+            )
+            session.add_all([first_root, second_root, child])
+            session.commit()
+
+        with Session(engine) as session:
+            first_root = session.get(question_model, 1)
+            first_root.archived_at = utc_now_for_test()
+            with pytest.raises(IntegrityError):
+                session.flush()
+            session.rollback()
+
+        with Session(engine) as session:
+            first_root = session.get(question_model, 1)
+            child = session.get(question_model, 3)
+            assert first_root.archived_at is None
+            assert child.merged_into_question_id == 1
+
+            # Task 4's source-group merge path must be able to repoint children
+            # before the old root is archived or merged elsewhere.
+            child.merged_into_question_id = 2
+            session.commit()
+
+        with Session(engine) as session:
+            first_root = session.get(question_model, 1)
+            first_root.archived_at = utc_now_for_test()
+            session.commit()
+            assert first_root.archived_at is not None
+            assert session.get(question_model, 3).merged_into_question_id == 2
+    finally:
+        engine.dispose()
+
+
+def test_canonical_root_without_children_can_be_archived(tmp_path):
+    _phase1b_models()
+    question_model = import_module("app.models.question").Question
+    app = _migrated_app(tmp_path / "archive-canonical-without-child.sqlite3")
+    engine = app.extensions["sqlalchemy_engine"]
+    try:
+        with Session(engine) as session:
+            question = _question(id=1, text="Standalone root")
+            session.add(question)
+            session.commit()
+            question.archived_at = utc_now_for_test()
+            session.commit()
+            assert session.get(question_model, 1).archived_at is not None
+    finally:
+        engine.dispose()
+
+
 def test_question_relation_sqlite_constraints_and_bidirectional_relationships(tmp_path):
     question_models = import_module("app.models.question")
     relation_model = getattr(question_models, "QuestionRelation")

@@ -137,15 +137,19 @@ def _insert_phase1b_history(connection) -> None:
     connection.execute(
         text(
             "INSERT INTO session_item "
-            "(id, session_id, question_id, ordinal, status) "
-            "VALUES (1, 1, 1, 1, 'completed')"
+            "(id, session_id, question_id, ordinal, status, selection_reason, "
+            "viewed_at, completed_at) "
+            "VALUES (1, 1, 1, 1, 'completed', 'random', "
+            "'2025-01-02 03:04:05', '2025-01-02 03:05:00')"
         )
     )
     connection.execute(
         text(
             "INSERT INTO practice_review "
-            "(id, question_id, session_item_id, review_rating) "
-            "VALUES (1, 1, 1, 'basic')"
+            "(id, question_id, session_item_id, review_rating, reviewed_at, "
+            "created_at, updated_at) "
+            "VALUES (1, 1, 1, 'basic', '2025-01-02 03:05:00', "
+            "'2025-01-02 03:05:00', '2025-01-03 04:05:00')"
         )
     )
 
@@ -401,6 +405,49 @@ def test_phase1c_migration_preserves_phase1b_history_and_fts(tmp_path):
     try:
         with engine.begin() as connection:
             _insert_phase1b_history(connection)
+            legacy_rows = {
+                "topic": connection.execute(
+                    text(
+                        "SELECT id, track_key, parent_id, slug, name, sort_order, is_active "
+                        "FROM topic ORDER BY id"
+                    )
+                ).all(),
+                "tag": connection.execute(
+                    text("SELECT id, name, is_active FROM tag ORDER BY id")
+                ).all(),
+                "question_topic": connection.execute(
+                    text(
+                        "SELECT question_id, topic_id FROM question_topic "
+                        "ORDER BY question_id, topic_id"
+                    )
+                ).all(),
+                "question_tag": connection.execute(
+                    text(
+                        "SELECT question_id, tag_id FROM question_tag "
+                        "ORDER BY question_id, tag_id"
+                    )
+                ).all(),
+                "question_state": connection.execute(
+                    text(
+                        "SELECT question_id, is_favorite, is_wrong, user_note, updated_at "
+                        "FROM question_state ORDER BY question_id"
+                    )
+                ).all(),
+                "session_item": connection.execute(
+                    text(
+                        "SELECT id, session_id, question_id, ordinal, status, "
+                        "selection_reason, viewed_at, completed_at "
+                        "FROM session_item ORDER BY id"
+                    )
+                ).all(),
+                "practice_review": connection.execute(
+                    text(
+                        "SELECT id, question_id, session_item_id, review_rating, "
+                        "reviewed_at, created_at, updated_at "
+                        "FROM practice_review ORDER BY id"
+                    )
+                ).all(),
+            }
             triggers_before = {
                 row[0]
                 for row in connection.execute(
@@ -478,11 +525,47 @@ def test_phase1c_migration_preserves_phase1b_history_and_fts(tmp_path):
             assert connection.execute(
                 text("SELECT question_source_id, ocr_block_id FROM question_source_ocr_block")
             ).one() == (1, "00000000-0000-4000-8000-000000000001")
-            assert connection.scalar(text("SELECT count(*) FROM question_topic")) == 1
-            assert connection.scalar(text("SELECT count(*) FROM question_tag")) == 1
-            assert connection.scalar(text("SELECT count(*) FROM question_state")) == 1
-            assert connection.scalar(text("SELECT count(*) FROM session_item")) == 1
-            assert connection.scalar(text("SELECT count(*) FROM practice_review")) == 1
+            assert connection.execute(
+                text(
+                    "SELECT id, track_key, parent_id, slug, name, sort_order, is_active "
+                    "FROM topic ORDER BY id"
+                )
+            ).all() == legacy_rows["topic"]
+            assert connection.execute(
+                text("SELECT id, name, is_active FROM tag ORDER BY id")
+            ).all() == legacy_rows["tag"]
+            assert connection.execute(
+                text(
+                    "SELECT question_id, topic_id FROM question_topic "
+                    "ORDER BY question_id, topic_id"
+                )
+            ).all() == legacy_rows["question_topic"]
+            assert connection.execute(
+                text(
+                    "SELECT question_id, tag_id FROM question_tag "
+                    "ORDER BY question_id, tag_id"
+                )
+            ).all() == legacy_rows["question_tag"]
+            assert connection.execute(
+                text(
+                    "SELECT question_id, is_favorite, is_wrong, user_note, updated_at "
+                    "FROM question_state ORDER BY question_id"
+                )
+            ).all() == legacy_rows["question_state"]
+            assert connection.execute(
+                text(
+                    "SELECT id, session_id, question_id, ordinal, status, "
+                    "selection_reason, viewed_at, completed_at "
+                    "FROM session_item ORDER BY id"
+                )
+            ).all() == legacy_rows["session_item"]
+            assert connection.execute(
+                text(
+                    "SELECT id, question_id, session_item_id, review_rating, "
+                    "reviewed_at, created_at, updated_at "
+                    "FROM practice_review ORDER BY id"
+                )
+            ).all() == legacy_rows["practice_review"]
             assert connection.scalar(
                 text(
                     "SELECT count(*) FROM question_fts "

@@ -134,8 +134,12 @@ def _create_canonical_pointer_triggers() -> None:
     op.execute(
         """
         CREATE TRIGGER question_merge_target_stays_root
-        BEFORE UPDATE OF status, merged_into_question_id ON question
-        WHEN (NEW.status <> 'active' OR NEW.merged_into_question_id IS NOT NULL)
+        BEFORE UPDATE OF status, merged_into_question_id, archived_at ON question
+        WHEN (
+                NEW.status <> 'active'
+                OR NEW.merged_into_question_id IS NOT NULL
+                OR NEW.archived_at IS NOT NULL
+             )
          AND EXISTS (
                 SELECT 1 FROM question AS child
                 WHERE child.merged_into_question_id = OLD.id
