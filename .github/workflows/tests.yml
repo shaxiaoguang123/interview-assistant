@@ -36,5 +36,7 @@ jobs:
         run: npm ci --prefix frontend
       - name: Run frontend tests
         run: npm --prefix frontend test
+      - name: Check Vue and TypeScript types
+        run: npm --prefix frontend run type-check
       - name: Build frontend
         run: npm --prefix frontend run build

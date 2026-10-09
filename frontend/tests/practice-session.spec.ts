@@ -263,7 +263,7 @@ describe("rule-based practice", () => {
     await flushPromises();
 
     expect(wrapper.get("[role='alert']").text()).toContain("Temporary failure");
-    expect(wrapper.get("button[aria-label='自评基本会']").exists()).toBe(true);
+    expect(wrapper.find("button[aria-label='自评基本会']").exists()).toBe(true);
     await wrapper.get("button[aria-label='自评基本会']").trigger("click");
     await flushPromises();
 
