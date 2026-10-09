@@ -16,7 +16,12 @@ from app.models.ingestion import (
     SourceAsset,
 )
 from app.models.question import Question
-from app.ocr import OCRAdapter, OCRAdapterInitializationError, get_ocr_adapter
+from app.ocr import (
+    OCRAdapter,
+    OCRAdapterInitializationError,
+    get_ocr_adapter,
+    recognize_with_ocr_adapter,
+)
 from app.repositories.ingestion import get_ingestion_job
 from app.services.candidate_builder import CandidateDraft, build_candidate_groups
 from app.services.questions import prepare_question_text
@@ -286,7 +291,7 @@ def _run_ingestion(app: Flask, job_id: int, adapter: OCRAdapter | None) -> dict:
 
         failure_stage = "recognizing"
         image = _load_display_image(app, job_id)
-        detections = adapter.recognize(image)
+        detections = recognize_with_ocr_adapter(app, adapter, image)
 
         failure_stage = "building_candidates"
         _set_job_stage(session_factory, job_id, "building_candidates")

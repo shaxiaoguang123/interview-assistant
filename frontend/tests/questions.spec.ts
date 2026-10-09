@@ -30,6 +30,79 @@ function makeQuestion(id: number, text: string, archivedAt: string | null = null
   };
 }
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
+
+type ReviewRating = "dont_know" | "vague" | "basic" | "proficient";
+
+interface ReviewFixture {
+  id: number;
+  question_id: number;
+  session_item_id: number;
+  review_rating: ReviewRating;
+  reviewed_at: string;
+  created_at: string;
+  updated_at: string;
+}
+
+function makeReview(id: number, questionId: number, rating: ReviewRating): ReviewFixture {
+  const timestamp = "2026-10-09T00:00:00Z";
+  return {
+    id,
+    question_id: questionId,
+    session_item_id: id,
+    review_rating: rating,
+    reviewed_at: timestamp,
+    created_at: timestamp,
+    updated_at: timestamp,
+  };
+}
+
+function jsonResponse<T>(body: T, status = 200): Response {
+  return { ok: status >= 200 && status < 300, status, json: async () => body } as Response;
+}
+
+function questionFetchMock(
+  override: (path: string, init?: RequestInit) => Response | Promise<Response> | undefined = () => undefined,
+  reviewRows: Record<number, ReviewFixture[]> = {},
+): typeof fetch {
+  return vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const path = String(input);
+    const custom = override(path, init);
+    if (custom) return custom;
+    if (path === "/api/v1/topics" || path === "/api/v1/tags") return jsonResponse([]);
+    const detail = path.match(/^\/api\/v1\/questions\/(\d+)$/);
+    if (detail && (init?.method ?? "GET") === "GET") {
+      const id = Number(detail[1]);
+      return jsonResponse(makeQuestion(id, id === 1 ? "Question A" : `Question ${id}`));
+    }
+    const reviews = path.match(/^\/api\/v1\/questions\/(\d+)\/practice-reviews$/);
+    if (reviews) return jsonResponse(reviewRows[Number(reviews[1])] ?? []);
+    if (/^\/api\/v1\/questions\/\d+\/sources$/.test(path)) return jsonResponse([]);
+    throw new Error(`Unexpected request: ${String(init?.method ?? "GET")} ${path}`);
+  }) as typeof fetch;
+}
+
+async function mountQuestionDetail(fetchMock: typeof fetch, questionId = 1) {
+  const pageModules = import.meta.glob("../src/pages/QuestionDetailPage.vue", { eager: true });
+  const pageModule = pageModules["../src/pages/QuestionDetailPage.vue"] as
+    | { default?: object }
+    | undefined;
+  expect(pageModule, "missing feature: QuestionDetailPage.vue").toBeDefined();
+  vi.stubGlobal("fetch", fetchMock);
+  const router = createAppRouter(createMemoryHistory());
+  await router.push(`/questions/${questionId}`);
+  await router.isReady();
+  const wrapper = mount(pageModule!.default!, { global: { plugins: [router] } });
+  await flushPromises();
+  return { wrapper, router };
+}
+
 describe("manual question bank", () => {
   it("searches a query and renders matching questions", async () => {
     const pageModules = import.meta.glob("../src/pages/QuestionBankPage.vue", { eager: true });
@@ -146,8 +219,8 @@ describe("manual question bank", () => {
 
     expect(wrapper.text()).toContain("Legacy Topic（停用，先移除或替换）");
     expect(wrapper.text()).toContain("Legacy Tag（停用，先移除或替换）");
-    expect(wrapper.get("input[type='checkbox'][value='8']").element.disabled).toBe(false);
-    expect(wrapper.get("input[type='checkbox'][value='9']").element.disabled).toBe(false);
+    expect((wrapper.get("input[type='checkbox'][value='8']").element as HTMLInputElement).disabled).toBe(false);
+    expect((wrapper.get("input[type='checkbox'][value='9']").element as HTMLInputElement).disabled).toBe(false);
   });
 
   it("renders question validation errors from the shared envelope", async () => {
@@ -212,8 +285,9 @@ describe("manual question bank", () => {
           return { ok: true, status: 200, json: async () => [] } as Response;
         }
         if (path === "/api/v1/questions/1" && init?.method === "PATCH") {
-          patchBody = JSON.parse(String(init.body));
-          question = { ...question, text: String(patchBody.text) };
+          const body = JSON.parse(String(init.body)) as Record<string, unknown>;
+          patchBody = body;
+          question = { ...question, text: String(body.text) };
           return { ok: true, status: 200, json: async () => question } as Response;
         }
         throw new Error(`Unexpected request: ${String(init?.method ?? "GET")} ${path}`);
@@ -225,6 +299,7 @@ describe("manual question bank", () => {
     await router.isReady();
     const wrapper = mount(pageModule!.default!, { global: { plugins: [router] } });
     await flushPromises();
+    expect(wrapper.find("[aria-label='截图来源定位']").exists()).toBe(false);
     await wrapper.get("textarea[aria-label='题目正文']").setValue("Updated question text");
     await wrapper.get("form[aria-label='题目表单']").trigger("submit.prevent");
     await flushPromises();
@@ -284,7 +359,7 @@ describe("manual question bank", () => {
     await flushPromises();
 
     expect(wrapper.get("[role='alert']").text()).toContain("Invalid");
-    expect(wrapper.get("form[aria-label='题目表单']").exists()).toBe(true);
+    expect(wrapper.find("form[aria-label='题目表单']").exists()).toBe(true);
     await wrapper.get("textarea[aria-label='题目正文']").setValue("Corrected question");
     await wrapper.get("form[aria-label='题目表单']").trigger("submit.prevent");
     await flushPromises();
@@ -342,7 +417,7 @@ describe("manual question bank", () => {
     );
   });
 
-  it("shows the OCR source snapshot and original-image link for a question", async () => {
+  it("reuses the source viewer to highlight and switch OCR question sources", async () => {
     const pageModules = import.meta.glob("../src/pages/QuestionDetailPage.vue", { eager: true });
     const pageModule = pageModules["../src/pages/QuestionDetailPage.vue"] as
       | { default?: object }
@@ -356,13 +431,49 @@ describe("manual question bank", () => {
         source_asset_id: 8,
         source_title: "Interview screenshot",
         original_filename: "capture.png",
+        display_width: 1080,
+        display_height: 1800,
         source_text_snapshot: "What is MCP?",
         raw_ocr_text_snapshot: "1. What is MCP?\nMCP protocol details",
         locator_json: { x: 0.1, y: 0.2, width: 0.5, height: 0.1 },
-        locator_correction_json: null,
+        locator_correction_json: { x: 0.2, y: 0.25, width: 0.45, height: 0.12 },
         ocr_block_ids: ["block-uuid-1"],
+        ocr_blocks: [
+          {
+            id: "block-uuid-1",
+            text: "What is MCP?",
+            bbox: { x: 0.1, y: 0.2, width: 0.5, height: 0.1 },
+            reading_order: 0,
+            confidence: 0.95,
+          },
+        ],
         original_image_url: "/api/v1/sources/8/original",
         display_image_url: "/api/v1/sources/8/display",
+      },
+      {
+        question_source_id: 92,
+        question_id: 1,
+        source_asset_id: 9,
+        source_title: "Second screenshot",
+        original_filename: "second.png",
+        display_width: 800,
+        display_height: 1200,
+        source_text_snapshot: "How does MCP connect tools?",
+        raw_ocr_text_snapshot: "How does MCP connect tools?\nOther text",
+        locator_json: { x: 0.4, y: 0.5, width: 0.4, height: 0.12 },
+        locator_correction_json: null,
+        ocr_block_ids: ["block-uuid-2"],
+        ocr_blocks: [
+          {
+            id: "block-uuid-2",
+            text: "How does MCP connect tools?",
+            bbox: { x: 0.4, y: 0.5, width: 0.4, height: 0.12 },
+            reading_order: 0,
+            confidence: 0.9,
+          },
+        ],
+        original_image_url: "/api/v1/sources/9/original",
+        display_image_url: "/api/v1/sources/9/display",
       },
     ];
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
@@ -391,9 +502,375 @@ describe("manual question bank", () => {
 
     expect(wrapper.get("[aria-label='题目来源证据']").text()).toContain("What is MCP?");
     expect(wrapper.text()).toContain("1. What is MCP?");
-    expect(wrapper.get("a[href='/api/v1/sources/8/original']").exists()).toBe(true);
-    expect(wrapper.get("img[alt='题目来源截图区域预览']").attributes("src")).toBe(
+    expect(wrapper.find("a[href='/api/v1/sources/8/original']").exists()).toBe(true);
+    expect(wrapper.find("[aria-label='截图来源定位']").exists()).toBe(true);
+    expect(wrapper.get("[data-source-region-id='91']").attributes("x")).toBe("216");
+    expect(wrapper.get("img[alt='EXIF 方向校正后的截图预览']").attributes("src")).toBe(
       "/api/v1/sources/8/display",
     );
+    await wrapper.get("button[aria-label='来源区域 92']").trigger("click");
+    await flushPromises();
+    expect(wrapper.get("img[alt='EXIF 方向校正后的截图预览']").attributes("src")).toBe(
+      "/api/v1/sources/9/display",
+    );
+    expect(wrapper.get("[data-source-region-id='92']").attributes("data-selected")).toBe("true");
+    expect(wrapper.get("[aria-label='题目来源证据']").text()).toContain("Other text");
+    expect(wrapper.find("a[href='/api/v1/sources/9/original']").exists()).toBe(true);
+  });
+
+  it("distinguishes source API failure from no sources and retries successfully", async () => {
+    const pageModules = import.meta.glob("../src/pages/QuestionDetailPage.vue", { eager: true });
+    const pageModule = pageModules["../src/pages/QuestionDetailPage.vue"] as
+      | { default?: object }
+      | undefined;
+    expect(pageModule).toBeDefined();
+    const sourceRow = {
+      question_source_id: 201,
+      question_id: 1,
+      source_asset_id: 20,
+      source_title: "Recovered screenshot",
+      original_filename: "recovered.png",
+      display_width: 800,
+      display_height: 1200,
+      source_text_snapshot: "Source loaded after retry",
+      raw_ocr_text_snapshot: "Source loaded after retry",
+      locator_json: { x: 0.1, y: 0.2, width: 0.5, height: 0.1 },
+      locator_correction_json: null,
+      ocr_block_ids: [],
+      ocr_blocks: [],
+      original_image_url: "/api/v1/sources/20/original",
+      display_image_url: "/api/v1/sources/20/display",
+    };
+    let sourceAttempts = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const path = String(input);
+        if (path === "/api/v1/questions/1") {
+          return { ok: true, status: 200, json: async () => makeQuestion(1, "Question with source") } as Response;
+        }
+        if (path === "/api/v1/topics" || path === "/api/v1/tags") {
+          return { ok: true, status: 200, json: async () => [] } as Response;
+        }
+        if (path === "/api/v1/questions/1/practice-reviews") {
+          return { ok: true, status: 200, json: async () => [] } as Response;
+        }
+        if (path === "/api/v1/questions/1/sources") {
+          sourceAttempts += 1;
+          if (sourceAttempts === 1) {
+            return {
+              ok: false,
+              status: 503,
+              json: async () => ({ error: { code: "UNAVAILABLE", message: "Source service unavailable" } }),
+            } as Response;
+          }
+          return { ok: true, status: 200, json: async () => [sourceRow] } as Response;
+        }
+        throw new Error("Unexpected request: " + path);
+      }),
+    );
+
+    const router = createAppRouter(createMemoryHistory());
+    await router.push("/questions/1");
+    await router.isReady();
+    const wrapper = mount(pageModule!.default!, { global: { plugins: [router] } });
+    await flushPromises();
+
+    expect(wrapper.get("[aria-label='题目来源加载失败']").text()).toContain("Source service unavailable");
+    expect(wrapper.find("[aria-label='暂无截图来源']").exists()).toBe(false);
+    await wrapper.get("button[aria-label='重试加载题目来源']").trigger("click");
+    await flushPromises();
+
+    expect(sourceAttempts).toBe(2);
+    expect(wrapper.find("[data-source-asset-id='20']").exists()).toBe(true);
+    expect(wrapper.get("[aria-label='题目来源证据']").text()).toContain("Source loaded after retry");
+    expect(wrapper.find("[aria-label='题目来源加载失败']").exists()).toBe(false);
+  });
+
+  it("shows a real empty-source state for a manual question", async () => {
+    const pageModules = import.meta.glob("../src/pages/QuestionDetailPage.vue", { eager: true });
+    const pageModule = pageModules["../src/pages/QuestionDetailPage.vue"] as
+      | { default?: object }
+      | undefined;
+    expect(pageModule).toBeDefined();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const path = String(input);
+        if (path === "/api/v1/questions/1") {
+          return { ok: true, status: 200, json: async () => makeQuestion(1, "Manual question") } as Response;
+        }
+        if (path === "/api/v1/topics" || path === "/api/v1/tags") {
+          return { ok: true, status: 200, json: async () => [] } as Response;
+        }
+        if (path === "/api/v1/questions/1/practice-reviews") {
+          return { ok: true, status: 200, json: async () => [] } as Response;
+        }
+        if (path === "/api/v1/questions/1/sources") {
+          return { ok: true, status: 200, json: async () => [] } as Response;
+        }
+        throw new Error("Unexpected request: " + path);
+      }),
+    );
+    const router = createAppRouter(createMemoryHistory());
+    await router.push("/questions/1");
+    await router.isReady();
+    const wrapper = mount(pageModule!.default!, { global: { plugins: [router] } });
+    await flushPromises();
+
+    expect(wrapper.get("[aria-label='暂无截图来源']").text()).toBe("暂无截图来源");
+    expect(wrapper.find("[aria-label='截图来源定位']").exists()).toBe(false);
+    expect(wrapper.find("[aria-label='题目来源加载失败']").exists()).toBe(false);
+  });
+
+  it("ignores a delayed source response after navigation to another question", async () => {
+    const pageModules = import.meta.glob("../src/pages/QuestionDetailPage.vue", { eager: true });
+    const pageModule = pageModules["../src/pages/QuestionDetailPage.vue"] as
+      | { default?: object }
+      | undefined;
+    expect(pageModule).toBeDefined();
+    const sourceA = deferred<Response>();
+    const sourceForQuestion = (questionId: number, sourceId: number, text: string) => [{
+      question_source_id: sourceId,
+      question_id: questionId,
+      source_asset_id: sourceId,
+      source_title: text,
+      original_filename: `${sourceId}.png`,
+      display_width: 800,
+      display_height: 1200,
+      source_text_snapshot: text,
+      raw_ocr_text_snapshot: text,
+      locator_json: { x: 0.1, y: 0.2, width: 0.5, height: 0.1 },
+      locator_correction_json: null,
+      ocr_block_ids: [],
+      ocr_blocks: [],
+      original_image_url: `/api/v1/sources/${sourceId}/original`,
+      display_image_url: `/api/v1/sources/${sourceId}/display`,
+    }];
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const path = String(input);
+      const questionMatch = path.match(/^\/api\/v1\/questions\/(\d+)(?:\/([^/]+))?$/);
+      if (questionMatch && !questionMatch[2]) {
+        const id = Number(questionMatch[1]);
+        return { ok: true, status: 200, json: async () => makeQuestion(id, `Question ${id}`) } as Response;
+      }
+      if (path === "/api/v1/topics" || path === "/api/v1/tags") {
+        return { ok: true, status: 200, json: async () => [] } as Response;
+      }
+      const reviews = path.match(/^\/api\/v1\/questions\/(\d+)\/practice-reviews$/);
+      if (reviews) return { ok: true, status: 200, json: async () => [] } as Response;
+      const sources = path.match(/^\/api\/v1\/questions\/(\d+)\/sources$/);
+      if (sources && sources[1] === "1") return sourceA.promise;
+      if (sources && sources[1] === "2") {
+        return { ok: true, status: 200, json: async () => sourceForQuestion(2, 202, "Question B source") } as Response;
+      }
+      throw new Error("Unexpected request: " + path);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const router = createAppRouter(createMemoryHistory());
+    await router.push("/questions/1");
+    await router.isReady();
+    const wrapper = mount(pageModule!.default!, { global: { plugins: [router] } });
+    await flushPromises();
+    expect(fetchMock).toHaveBeenCalledWith("/api/v1/questions/1/sources", expect.anything());
+
+    await router.push("/questions/2");
+    await flushPromises();
+    expect(wrapper.find("[data-source-asset-id='202']").exists()).toBe(true);
+    sourceA.resolve({
+      ok: true,
+      status: 200,
+      json: async () => sourceForQuestion(1, 101, "Delayed Question A source"),
+    } as Response);
+    await flushPromises();
+
+    expect(wrapper.find("[data-source-asset-id='202']").exists()).toBe(true);
+    expect(wrapper.get("[aria-label='题目来源证据']").text()).toContain("Question B source");
+    expect(wrapper.get("[aria-label='题目来源证据']").text()).not.toContain("Delayed Question A source");
+    expect(wrapper.find("[aria-label='题目来源加载失败']").exists()).toBe(false);
+  });
+
+  it("ignores a successful save response from the previous question", async () => {
+    const oldSave = deferred<Response>();
+    const fetchMock = questionFetchMock((path, init) => {
+      if (path === "/api/v1/questions/1" && init?.method === "PATCH") return oldSave.promise;
+      return undefined;
+    });
+    const { wrapper, router } = await mountQuestionDetail(fetchMock);
+
+    await wrapper.get("textarea[aria-label='题目正文']").setValue("Edited A");
+    const saveRequest = wrapper.get("form[aria-label='题目表单']").trigger("submit.prevent");
+    await flushPromises();
+    await router.push("/questions/2");
+    await flushPromises();
+    expect((wrapper.get("textarea[aria-label='题目正文']").element as HTMLTextAreaElement).value).toBe("Question 2");
+
+    oldSave.resolve(jsonResponse(makeQuestion(1, "Stale A response")));
+    await saveRequest;
+    await flushPromises();
+
+    expect((wrapper.get("textarea[aria-label='题目正文']").element as HTMLTextAreaElement).value).toBe("Question 2");
+    expect(wrapper.find("[role='alert']").exists()).toBe(false);
+  });
+
+  it("does not show a save error from the previous question", async () => {
+    const oldSave = deferred<Response>();
+    const fetchMock = questionFetchMock((path, init) => {
+      if (path === "/api/v1/questions/1" && init?.method === "PATCH") return oldSave.promise;
+      return undefined;
+    });
+    const { wrapper, router } = await mountQuestionDetail(fetchMock);
+
+    await wrapper.get("textarea[aria-label='题目正文']").setValue("Edited A");
+    const saveRequest = wrapper.get("form[aria-label='题目表单']").trigger("submit.prevent");
+    await flushPromises();
+    await router.push("/questions/2");
+    await flushPromises();
+    oldSave.resolve(jsonResponse({
+      error: { code: "CONFLICT", message: "Stale Question A conflict", fields: {} },
+    }, 409));
+    await saveRequest;
+    await flushPromises();
+
+    expect((wrapper.get("textarea[aria-label='题目正文']").element as HTMLTextAreaElement).value).toBe("Question 2");
+    expect(wrapper.find("[role='alert']").exists()).toBe(false);
+  });
+
+  it("does not apply a stale favorite response to the newly selected question", async () => {
+    const oldState = deferred<Response>();
+    const fetchMock = questionFetchMock((path, init) => {
+      if (path === "/api/v1/questions/1/state" && init?.method === "PATCH") return oldState.promise;
+      return undefined;
+    });
+    const { wrapper, router } = await mountQuestionDetail(fetchMock);
+
+    const stateRequest = wrapper.get("button").trigger("click");
+    await flushPromises();
+    await router.push("/questions/2");
+    await flushPromises();
+    oldState.resolve(jsonResponse({
+      question_id: 1,
+      is_favorite: true,
+      is_wrong: false,
+      user_note: null,
+    }));
+    await stateRequest;
+    await flushPromises();
+
+    expect(wrapper.get("button").text()).toBe("收藏");
+    expect(wrapper.find("button").text()).not.toBe("取消收藏");
+    expect(wrapper.find("[role='alert']").exists()).toBe(false);
+  });
+
+  it("does not apply an old archive response to the newly selected question", async () => {
+    const oldArchive = deferred<Response>();
+    const fetchMock = questionFetchMock((path, init) => {
+      if (path === "/api/v1/questions/1/archive" && init?.method === "POST") return oldArchive.promise;
+      return undefined;
+    });
+    const { wrapper, router } = await mountQuestionDetail(fetchMock);
+
+    const archiveButton = wrapper.findAll("button").find((button) => button.text() === "归档");
+    expect(archiveButton).toBeDefined();
+    const archiveRequest = archiveButton!.trigger("click");
+    await flushPromises();
+    await router.push("/questions/2");
+    await flushPromises();
+    oldArchive.resolve(jsonResponse(makeQuestion(1, "Archived A", "2026-10-09T00:00:00Z")));
+    await archiveRequest;
+    await flushPromises();
+
+    expect((wrapper.get("textarea[aria-label='题目正文']").element as HTMLTextAreaElement).value).toBe("Question 2");
+    expect(wrapper.text()).not.toContain("已归档");
+    expect(wrapper.findAll("button").some((button) => button.text() === "归档")).toBe(true);
+  });
+
+  it("does not surface a stale PracticeReview error on another question", async () => {
+    const reviewA = makeReview(301, 1, "dont_know");
+    const reviewB = makeReview(302, 2, "vague");
+    const oldReviewPatch = deferred<Response>();
+    const fetchMock = questionFetchMock((path, init) => {
+      if (path === "/api/v1/practice-reviews/301" && init?.method === "PATCH") return oldReviewPatch.promise;
+      return undefined;
+    }, { 1: [reviewA], 2: [reviewB] });
+    const { wrapper, router } = await mountQuestionDetail(fetchMock);
+
+    await wrapper.get("select[aria-label='更正掌握度 301']").setValue("basic");
+    const correctionRequest = wrapper.get("button[aria-label='保存自评 301']").trigger("click");
+    await flushPromises();
+    await router.push("/questions/2");
+    await flushPromises();
+    oldReviewPatch.resolve(jsonResponse({
+      error: { code: "CONFLICT", message: "Stale review conflict", fields: {} },
+    }, 409));
+    await correctionRequest;
+    await flushPromises();
+
+    expect(wrapper.get("[data-review-id='302']").text()).toContain("模糊");
+    expect((wrapper.get("select[aria-label='更正掌握度 302']").element as HTMLSelectElement).value).toBe("vague");
+    expect(wrapper.find("[role='alert']").exists()).toBe(false);
+  });
+
+  it("keeps the second A load when the first A mutation returns after A to B to A", async () => {
+    const oldSave = deferred<Response>();
+    let questionALoads = 0;
+    const fetchMock = questionFetchMock((path, init) => {
+      if (path === "/api/v1/questions/1" && init?.method === "PATCH") return oldSave.promise;
+      if (path === "/api/v1/questions/1" && (init?.method ?? "GET") === "GET") {
+        questionALoads += 1;
+        return jsonResponse(makeQuestion(1, questionALoads === 1 ? "Question A first load" : "Question A latest load"));
+      }
+      return undefined;
+    });
+    const { wrapper, router } = await mountQuestionDetail(fetchMock);
+
+    await wrapper.get("textarea[aria-label='题目正文']").setValue("Edited in first A visit");
+    const saveRequest = wrapper.get("form[aria-label='题目表单']").trigger("submit.prevent");
+    await flushPromises();
+    await router.push("/questions/2");
+    await flushPromises();
+    await router.push("/questions/1");
+    await flushPromises();
+    expect((wrapper.get("textarea[aria-label='题目正文']").element as HTMLTextAreaElement).value).toBe("Question A latest load");
+
+    oldSave.resolve(jsonResponse(makeQuestion(1, "Stale first A response")));
+    await saveRequest;
+    await flushPromises();
+
+    expect((wrapper.get("textarea[aria-label='题目正文']").element as HTMLTextAreaElement).value).toBe("Question A latest load");
+  });
+
+  it("applies state, archive, and PracticeReview writes while staying on the same question", async () => {
+    let review = makeReview(401, 1, "dont_know");
+    const fetchMock = questionFetchMock((path, init) => {
+      if (path === "/api/v1/questions/1/state" && init?.method === "PATCH") {
+        return jsonResponse({ question_id: 1, is_favorite: true, is_wrong: false, user_note: null });
+      }
+      if (path === "/api/v1/questions/1/archive" && init?.method === "POST") {
+        return jsonResponse(makeQuestion(1, "Question A", "2026-10-09T00:00:00Z"));
+      }
+      if (path === "/api/v1/practice-reviews/401" && init?.method === "PATCH") {
+        review = { ...review, review_rating: "basic" };
+        return jsonResponse(review);
+      }
+      return undefined;
+    }, { 1: [review] });
+    const { wrapper } = await mountQuestionDetail(fetchMock);
+
+    await wrapper.get("button").trigger("click");
+    await flushPromises();
+    expect(wrapper.find("button").text()).toBe("取消收藏");
+    const archiveButton = wrapper.findAll("button").find((button) => button.text() === "归档");
+    expect(archiveButton).toBeDefined();
+    await archiveButton!.trigger("click");
+    await flushPromises();
+    expect(wrapper.text()).toContain("已归档");
+    await wrapper.get("select[aria-label='更正掌握度 401']").setValue("basic");
+    await wrapper.get("button[aria-label='保存自评 401']").trigger("click");
+    await flushPromises();
+
+    expect(wrapper.get("[data-review-id='401']").text()).toContain("基本会");
+    expect((wrapper.get("select[aria-label='更正掌握度 401']").element as HTMLSelectElement).value).toBe("basic");
   });
 });

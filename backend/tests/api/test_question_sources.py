@@ -72,6 +72,8 @@ def test_question_source_history_opens_original_and_display_images(client, app):
     item = response.get_json()[0]
     assert item["question_source_id"] == source_id
     assert item["source_asset_id"] == asset_id
+    assert item["display_width"] == 30
+    assert item["display_height"] == 20
     assert item["raw_ocr_text_snapshot"] == "Where is the evidence?"
     assert item["ocr_block_ids"] == [block_id]
     assert item["original_image_url"] == f"/api/v1/sources/{asset_id}/original"

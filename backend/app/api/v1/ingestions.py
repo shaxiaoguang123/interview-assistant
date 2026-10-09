@@ -14,6 +14,7 @@ from app.repositories.ingestion import (
 )
 from app.services.ingestion_candidates import (
     confirm_ingestion_candidate,
+    create_candidate_from_ocr_blocks,
     merge_ingestion_candidates,
     patch_ingestion_candidate,
     reject_ingestion_candidate,
@@ -185,6 +186,21 @@ def _lineage_response(session: Session, job_id: int, candidate_ids: list[int]) -
             if candidate_id in by_id
         ]
     }
+
+
+@blueprint.post("/ingestions/<int:job_id>/candidates")
+def post_ingestion_candidate(job_id: int):
+    candidate = create_candidate_from_ocr_blocks(
+        get_session(),
+        job_id,
+        request.get_json(silent=True),
+    )
+    result = _lineage_response(
+        get_session(),
+        job_id,
+        [candidate.id],
+    )["candidates"][0]
+    return jsonify(result), 201
 
 
 @blueprint.patch("/ingestion-candidates/<int:candidate_id>")

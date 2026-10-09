@@ -54,6 +54,8 @@ const correction = ref({ x: "0", y: "0", width: "0.1", height: "0.1" });
 const splitEnabled = ref(false);
 const splitPartOne = ref("");
 const splitPartTwo = ref("");
+const splitPartOneSourceText = ref("");
+const splitPartTwoSourceText = ref("");
 const splitPartOneBlockIds = ref<string[]>([]);
 const splitPartTwoBlockIds = ref<string[]>([]);
 const coordinates = ["x", "y", "width", "height"] as const;
@@ -71,6 +73,23 @@ const selectedSource = computed(
     props.candidate.sources[0] ??
     null,
 );
+
+function sourceTextForBlockIds(ids: string[]): string {
+  const selected = new Set(ids);
+  return allBlockOptions.value
+    .filter((block) => selected.has(block.id))
+    .map((block) => block.text)
+    .join("\n");
+}
+
+function sameIds(left: string[], right: TopicTag[]): boolean {
+  const leftIds = left.map(Number);
+  const rightIds = right.map((item) => item.id);
+  return (
+    leftIds.length === rightIds.length &&
+    leftIds.every((id) => Number.isInteger(id) && rightIds.includes(id))
+  );
+}
 
 function resetDrafts() {
   textDraft.value = props.candidate.text;
@@ -90,6 +109,8 @@ function resetDrafts() {
   splitPartTwo.value = "";
   splitPartOneBlockIds.value = allBlockOptions.value.map((block) => block.id);
   splitPartTwoBlockIds.value = allBlockOptions.value.map((block) => block.id);
+  splitPartOneSourceText.value = sourceTextForBlockIds(splitPartOneBlockIds.value);
+  splitPartTwoSourceText.value = sourceTextForBlockIds(splitPartTwoBlockIds.value);
 }
 
 watch(
@@ -109,6 +130,22 @@ watch(selectedSource, (source) => {
   };
 });
 
+watch(
+  splitPartOneBlockIds,
+  (ids) => {
+    splitPartOneSourceText.value = sourceTextForBlockIds(ids);
+  },
+  { deep: true },
+);
+
+watch(
+  splitPartTwoBlockIds,
+  (ids) => {
+    splitPartTwoSourceText.value = sourceTextForBlockIds(ids);
+  },
+  { deep: true },
+);
+
 function save() {
   const source = selectedSource.value;
   const locatorCorrection = {
@@ -117,20 +154,31 @@ function save() {
     width: Number(correction.value.width),
     height: Number(correction.value.height),
   };
-  emit("save", {
+  const payload: Record<string, unknown> = {
     expected_revision: props.candidate.candidate_revision,
-    text: textDraft.value,
-    topic_ids: selectedTopicIds.value.map(Number),
-    tag_ids: selectedTagIds.value.map(Number),
-    source_locator_corrections: source
-      ? [
-          {
-            question_source_id: source.question_source_id,
-            locator_correction_json: locatorCorrection,
-          },
-        ]
-      : [],
-  });
+  };
+  if (textDraft.value !== props.candidate.text) payload.text = textDraft.value;
+  if (!sameIds(selectedTopicIds.value, props.candidate.topics)) {
+    payload.topic_ids = selectedTopicIds.value.map(Number);
+  }
+  if (!sameIds(selectedTagIds.value, props.candidate.tags)) {
+    payload.tag_ids = selectedTagIds.value.map(Number);
+  }
+  if (source) {
+    const currentLocator = source.locator_correction_json ?? source.locator_json;
+    const locatorChanged = coordinates.some(
+      (coordinate) => locatorCorrection[coordinate] !== currentLocator[coordinate],
+    );
+    if (locatorChanged) {
+      payload.source_locator_corrections = [
+        {
+          question_source_id: source.question_source_id,
+          locator_correction_json: locatorCorrection,
+        },
+      ];
+    }
+  }
+  if (Object.keys(payload).length > 1) emit("save", payload);
 }
 
 function onSourceChange(event: Event) {
@@ -145,12 +193,12 @@ function split() {
       {
         text: splitPartOne.value,
         ocr_block_ids: splitPartOneBlockIds.value,
-        source_text_snapshot: splitPartOne.value,
+        source_text_snapshot: splitPartOneSourceText.value,
       },
       {
         text: splitPartTwo.value,
         ocr_block_ids: splitPartTwoBlockIds.value,
-        source_text_snapshot: splitPartTwo.value,
+        source_text_snapshot: splitPartTwoSourceText.value,
       },
     ],
   });
@@ -224,8 +272,12 @@ function split() {
     </button>
     <form v-if="splitEnabled" aria-label="拆分候选题" @submit.prevent="split">
       <label>
-        第一题正文和 OCR 来源片段
+        第一题最终题目正文
         <textarea v-model="splitPartOne" aria-label="拆分第一部分正文" />
+      </label>
+      <label>
+        第一题 OCR 来源片段（原文证据）
+        <textarea v-model="splitPartOneSourceText" aria-label="拆分第一部分 OCR 来源片段" />
       </label>
       <label>
         第一题 OCR block
@@ -236,8 +288,12 @@ function split() {
         </select>
       </label>
       <label>
-        第二题正文和 OCR 来源片段
+        第二题最终题目正文
         <textarea v-model="splitPartTwo" aria-label="拆分第二部分正文" />
+      </label>
+      <label>
+        第二题 OCR 来源片段（原文证据）
+        <textarea v-model="splitPartTwoSourceText" aria-label="拆分第二部分 OCR 来源片段" />
       </label>
       <label>
         第二题 OCR block

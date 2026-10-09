@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from "vue";
+import { computed, ref, watch } from "vue";
 import { useRoute } from "vue-router";
 import { ApiError, request } from "../api/client";
+import SourceImageViewer from "../components/SourceImageViewer.vue";
 import QuestionForm from "../components/QuestionForm.vue";
 import TopicTagPicker from "../components/TopicTagPicker.vue";
 
@@ -38,11 +39,20 @@ interface QuestionSourceItem {
   source_asset_id: number;
   source_title: string | null;
   original_filename: string | null;
+  display_width: number;
+  display_height: number;
   source_text_snapshot: string;
   raw_ocr_text_snapshot: string;
   locator_json: { x: number; y: number; width: number; height: number };
   locator_correction_json: { x: number; y: number; width: number; height: number } | null;
   ocr_block_ids: string[];
+  ocr_blocks: Array<{
+    id: string;
+    text: string;
+    bbox: { x: number; y: number; width: number; height: number };
+    reading_order: number;
+    confidence: number | null;
+  }>;
   original_image_url: string;
   display_image_url: string;
 }
@@ -59,6 +69,9 @@ const route = useRoute();
 const question = ref<QuestionDetail | null>(null);
 const reviews = ref<PracticeReviewItem[]>([]);
 const sources = ref<QuestionSourceItem[]>([]);
+const sourceLoading = ref(false);
+const sourceLoadError = ref("");
+const selectedSourceId = ref<number | null>(null);
 const reviewRatingDrafts = ref<Record<number, PracticeReviewItem["review_rating"]>>({});
 const topics = ref<TaxonomyItem[]>([]);
 const tags = ref<TaxonomyItem[]>([]);
@@ -66,6 +79,11 @@ const errorMessage = ref("");
 const loading = ref(true);
 
 const questionId = computed(() => Number(route.params.id));
+let questionLoadRevision = 0;
+let sourceLoadRevision = 0;
+const selectedSource = computed(
+  () => sources.value.find((source) => source.question_source_id === selectedSourceId.value) ?? sources.value[0] ?? null,
+);
 
 function displayError(error: unknown): string {
   if (error instanceof ApiError) {
@@ -94,44 +112,85 @@ function sameIds(left: number[], right: number[]): boolean {
   return left.length === right.length && left.every((id) => right.includes(id));
 }
 
+function isCurrentQuestionRequest(requestedQuestionId: number, requestRevision: number): boolean {
+  return (
+    questionId.value === requestedQuestionId &&
+    questionLoadRevision === requestRevision &&
+    question.value?.id === requestedQuestionId
+  );
+}
+
 async function loadQuestion(): Promise<void> {
+  const requestedQuestionId = questionId.value;
+  const requestRevision = ++questionLoadRevision;
+  sourceLoadRevision += 1;
+  sources.value = [];
+  selectedSourceId.value = null;
+  sourceLoading.value = false;
+  sourceLoadError.value = "";
+  question.value = null;
+  reviews.value = [];
+  topics.value = [];
+  tags.value = [];
+  reviewRatingDrafts.value = {};
   loading.value = true;
   errorMessage.value = "";
   try {
     const [questionResult, topicResult, tagResult, reviewRows] = await Promise.all([
-      request<QuestionDetail>(`/api/v1/questions/${questionId.value}`),
+      request<QuestionDetail>(`/api/v1/questions/${requestedQuestionId}`),
       request<TaxonomyItem[]>("/api/v1/topics"),
       request<TaxonomyItem[]>("/api/v1/tags"),
-      request<PracticeReviewItem[]>(`/api/v1/questions/${questionId.value}/practice-reviews`),
+      request<PracticeReviewItem[]>(`/api/v1/questions/${requestedQuestionId}/practice-reviews`),
     ]);
+    if (requestRevision !== questionLoadRevision || requestedQuestionId !== questionId.value) return;
     question.value = questionResult;
     topics.value = mergeHistoricalItems(topicResult, questionResult.topics);
     tags.value = mergeHistoricalItems(tagResult, questionResult.tags);
     reviews.value = reviewRows;
-    void loadQuestionSources();
+    void loadQuestionSources(requestedQuestionId);
     reviewRatingDrafts.value = Object.fromEntries(
       reviewRows.map((review) => [review.id, review.review_rating]),
     );
   } catch (error) {
-    errorMessage.value = displayError(error);
+    if (requestRevision === questionLoadRevision && requestedQuestionId === questionId.value) {
+      errorMessage.value = displayError(error);
+    }
   } finally {
-    loading.value = false;
+    if (requestRevision === questionLoadRevision && requestedQuestionId === questionId.value) {
+      loading.value = false;
+    }
   }
 }
 
-async function loadQuestionSources(): Promise<void> {
+async function loadQuestionSources(requestedQuestionId = questionId.value): Promise<void> {
+  const requestRevision = ++sourceLoadRevision;
+  sourceLoading.value = true;
+  sourceLoadError.value = "";
   try {
-    sources.value = await request<QuestionSourceItem[]>(
-      "/api/v1/questions/" + questionId.value + "/sources",
+    const sourceRows = await request<QuestionSourceItem[]>(
+      "/api/v1/questions/" + requestedQuestionId + "/sources",
     );
-  } catch {
-    sources.value = [];
+    if (requestRevision !== sourceLoadRevision || requestedQuestionId !== questionId.value) return;
+    sources.value = sourceRows;
+    if (!sourceRows.some((source) => source.question_source_id === selectedSourceId.value)) {
+      selectedSourceId.value = sourceRows[0]?.question_source_id ?? null;
+    }
+  } catch (error) {
+    if (requestRevision === sourceLoadRevision && requestedQuestionId === questionId.value) {
+      sourceLoadError.value = displayError(error);
+    }
+  } finally {
+    if (requestRevision === sourceLoadRevision && requestedQuestionId === questionId.value) {
+      sourceLoading.value = false;
+    }
   }
 }
 
 async function update(payload: QuestionFormPayload): Promise<void> {
   const currentQuestion = question.value;
   if (!currentQuestion) return;
+  const requestedQuestionId = currentQuestion.id;
+  const requestRevision = questionLoadRevision;
 
   const patch: Partial<QuestionFormPayload> = {
     text: payload.text,
@@ -145,63 +204,97 @@ async function update(payload: QuestionFormPayload): Promise<void> {
 
   errorMessage.value = "";
   try {
-    question.value = await request<QuestionDetail>(`/api/v1/questions/${questionId.value}`, {
+    const updated = await request<QuestionDetail>(`/api/v1/questions/${requestedQuestionId}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(patch),
     });
+    if (!isCurrentQuestionRequest(requestedQuestionId, requestRevision)) return;
+    question.value = updated;
   } catch (error) {
-    errorMessage.value = displayError(error);
+    if (isCurrentQuestionRequest(requestedQuestionId, requestRevision)) {
+      errorMessage.value = displayError(error);
+    }
   }
 }
 
 async function patchState(field: "is_favorite" | "is_wrong"): Promise<void> {
-  if (!question.value) return;
+  const currentQuestion = question.value;
+  if (!currentQuestion) return;
+  const requestedQuestionId = currentQuestion.id;
+  const requestRevision = questionLoadRevision;
+  const nextValue = !currentQuestion.state[field];
   errorMessage.value = "";
   try {
     const state = await request<QuestionDetail["state"]>(
-      `/api/v1/questions/${questionId.value}/state`,
+      `/api/v1/questions/${requestedQuestionId}/state`,
       {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ [field]: !question.value.state[field] }),
+        body: JSON.stringify({ [field]: nextValue }),
       },
     );
-    question.value.state = state;
+    const activeQuestion = question.value;
+    if (!isCurrentQuestionRequest(requestedQuestionId, requestRevision) || !activeQuestion) return;
+    activeQuestion.state = state;
   } catch (error) {
-    errorMessage.value = displayError(error);
+    if (isCurrentQuestionRequest(requestedQuestionId, requestRevision)) {
+      errorMessage.value = displayError(error);
+    }
   }
 }
 
 async function archiveQuestion(): Promise<void> {
+  const currentQuestion = question.value;
+  if (!currentQuestion) return;
+  const requestedQuestionId = currentQuestion.id;
+  const requestRevision = questionLoadRevision;
   errorMessage.value = "";
   try {
-    question.value = await request<QuestionDetail>(`/api/v1/questions/${questionId.value}/archive`, {
+    const archived = await request<QuestionDetail>(`/api/v1/questions/${requestedQuestionId}/archive`, {
       method: "POST",
     });
+    if (!isCurrentQuestionRequest(requestedQuestionId, requestRevision)) return;
+    question.value = archived;
   } catch (error) {
-    errorMessage.value = displayError(error);
+    if (isCurrentQuestionRequest(requestedQuestionId, requestRevision)) {
+      errorMessage.value = displayError(error);
+    }
   }
 }
 
 async function correctReview(review: PracticeReviewItem): Promise<void> {
+  const currentQuestion = question.value;
+  if (!currentQuestion || review.question_id !== currentQuestion.id) return;
+  const requestedQuestionId = currentQuestion.id;
+  const requestRevision = questionLoadRevision;
+  const reviewId = review.id;
+  if (!reviews.value.some((item) => item.id === reviewId)) return;
   const reviewRating = reviewRatingDrafts.value[review.id];
   if (!reviewRating || reviewRating === review.review_rating) return;
   errorMessage.value = "";
   try {
-    const updated = await request<PracticeReviewItem>(`/api/v1/practice-reviews/${review.id}`, {
+    const updated = await request<PracticeReviewItem>(`/api/v1/practice-reviews/${reviewId}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ review_rating: reviewRating }),
     });
-    reviews.value = reviews.value.map((item) => (item.id === updated.id ? updated : item));
+    if (
+      !isCurrentQuestionRequest(requestedQuestionId, requestRevision) ||
+      updated.question_id !== requestedQuestionId ||
+      updated.id !== reviewId ||
+      !reviews.value.some((item) => item.id === reviewId)
+    ) return;
+    reviews.value = reviews.value.map((item) => (item.id === reviewId ? updated : item));
     reviewRatingDrafts.value[updated.id] = updated.review_rating;
   } catch (error) {
-    errorMessage.value = displayError(error);
+    if (isCurrentQuestionRequest(requestedQuestionId, requestRevision)) {
+      errorMessage.value = displayError(error);
+    }
   }
 }
 
-onMounted(loadQuestion);
+watch(questionId, () => void loadQuestion(), { immediate: true });
 </script>
 
 <template>
@@ -240,26 +333,38 @@ onMounted(loadQuestion);
         :tags="tags"
         @save="update"
       />
-      <section v-if="sources.length" aria-label="题目来源证据">
+      <section aria-label="题目来源证据">
         <h3>截图来源与 OCR 证据</h3>
-        <article v-for="source in sources" :key="source.question_source_id">
-          <h4>
-            来源区域 {{ source.question_source_id }} ·
-            {{ source.source_title || source.original_filename || ("截图 " + source.source_asset_id) }}
-          </h4>
-          <p>题目来源片段：{{ source.source_text_snapshot }}</p>
-          <details>
-            <summary>查看原始 OCR 文本</summary>
-            <pre>{{ source.raw_ocr_text_snapshot }}</pre>
-          </details>
-          <p>OCR block：{{ source.ocr_block_ids.join(", ") }}</p>
-          <img
-            :src="source.display_image_url"
-            alt="题目来源截图区域预览"
-            style="max-width: 24rem; max-height: 32rem; object-fit: contain"
+        <p v-if="sourceLoading" role="status">正在加载截图来源…</p>
+        <template v-else-if="sourceLoadError">
+          <p role="alert" aria-label="题目来源加载失败">截图来源加载失败：{{ sourceLoadError }}</p>
+          <button
+            type="button"
+            aria-label="重试加载题目来源"
+            :disabled="sourceLoading"
+            @click="loadQuestionSources()"
+          >
+            重新加载来源
+          </button>
+        </template>
+        <template v-else-if="sources.length">
+          <p v-if="selectedSource">
+            {{ selectedSource.source_title || selectedSource.original_filename || ("截图 " + selectedSource.source_asset_id) }}
+          </p>
+          <SourceImageViewer
+            :sources="sources"
+            :selected-source-id="selectedSourceId"
+            :image-width="selectedSource?.display_width ?? 0"
+            :image-height="selectedSource?.display_height ?? 0"
+            @select-source="selectedSourceId = $event"
           />
-          <a :href="source.original_image_url">打开原始截图</a>
-        </article>
+          <details v-if="selectedSource" aria-label="题目来源 OCR 原文">
+            <summary>查看原始 OCR 文本</summary>
+            <pre>{{ selectedSource.raw_ocr_text_snapshot }}</pre>
+            <p>OCR block：{{ selectedSource.ocr_block_ids.join(", ") }}</p>
+          </details>
+        </template>
+        <p v-else aria-label="暂无截图来源">暂无截图来源</p>
       </section>
       <section aria-labelledby="practice-history-title">
         <h3 id="practice-history-title">练习掌握度历史</h3>
