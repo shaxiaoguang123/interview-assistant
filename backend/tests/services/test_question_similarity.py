@@ -403,3 +403,49 @@ def test_refresh_ignores_archived_and_merged_children_as_targets(db_session):
     assert archived.id not in other_ids
     assert child.id not in other_ids
     assert root.id in other_ids
+
+
+@pytest.mark.parametrize(
+    ("left", "right"),
+    [
+        ("What is RAG?", "What is MCP?"),
+        ("How does RAG work?", "How does MCP work?"),
+        ("What is LangChain?", "What is LangGraph?"),
+        ("Explain RAG", "Explain MCP"),
+    ],
+)
+def test_question_framing_alone_is_not_same_question_evidence(db_session, left, right):
+    similarity = _service()
+    source = _add_question(db_session, left)
+    _add_question(db_session, right)
+
+    assert similarity.refresh_rule_suggestions(db_session, source.id) == []
+
+
+def test_display_limit_does_not_limit_exact_duplicate_detection(db_session):
+    similarity = _service()
+    targets = [_add_question(db_session, "What is MCP?") for _ in range(21)]
+    candidate = _add_pending_ocr_candidate(db_session, "What is MCP?")
+
+    first_page = similarity.refresh_rule_suggestions(db_session, candidate.id)
+
+    assert len(first_page) == 20
+    assert len(similarity.unresolved_same_question_relations(db_session, candidate.id)) == 21
+    for relation in first_page:
+        relation.decision_status = "rejected"
+        relation.suggested_by = "user"
+    db_session.flush()
+
+    next_page = similarity.refresh_rule_suggestions(db_session, candidate.id)
+    remaining = similarity.unresolved_same_question_relations(db_session, candidate.id)
+    assert len(next_page) == 20
+    assert len(remaining) == 1
+    assert remaining[0].id == next_page[0].id
+    assert targets[-1].id in (remaining[0].question_id, remaining[0].related_question_id)
+    assert all(relation.decision_status == "rejected" for relation in first_page)
+    remaining[0].relation_type = "different_question"
+    remaining[0].decision_status = "accepted"
+    remaining[0].suggested_by = "user"
+    db_session.flush()
+    similarity.refresh_rule_suggestions(db_session, candidate.id)
+    assert similarity.unresolved_same_question_relations(db_session, candidate.id) == []

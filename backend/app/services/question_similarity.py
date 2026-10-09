@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from hashlib import sha256
+import re
 
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
@@ -13,6 +14,9 @@ from app.models.taxonomy import utc_now
 SIMILARITY_THRESHOLD = 0.25
 MAX_SIMILAR_CANDIDATES = 20
 _UNRESOLVED_RELATION_STATUSES = {"suggested", "accepted"}
+_ENGLISH_QUESTION_FRAME = re.compile(
+    r"^(?:what\s+(?:is|are)|how\s+(?:does|do|can|would)|explain|describe)\s+"
+)
 
 
 def character_trigrams(value: str) -> set[str]:
@@ -92,7 +96,36 @@ def _pair_score(left: Question, right: Question) -> float | None:
     if left.normalized_hash == right.normalized_hash:
         return 1.0
     score = trigram_jaccard(left.text, right.text)
-    return score if score >= SIMILARITY_THRESHOLD else None
+    if score < SIMILARITY_THRESHOLD:
+        return None
+    left_content = _question_content(left.text)
+    right_content = _question_content(right.text)
+    if (
+        left_content is not None
+        and right_content is not None
+        and trigram_jaccard(left_content, right_content) < SIMILARITY_THRESHOLD
+    ):
+        return None
+    return score
+
+
+def _question_content(value: str) -> str | None:
+    """Remove generic English framing, never domain names or concepts.
+
+    A shared prompt like 'What is ...?' is not evidence that the subjects
+    are the same. Keep the full-text score, but also require content overlap
+    when both questions use a recognized frame. Exact hashes bypass this.
+    """
+    from app.services.questions import normalize_question_text
+
+    normalized = normalize_question_text(value).rstrip("?.!").strip()
+    frame = _ENGLISH_QUESTION_FRAME.match(normalized)
+    if frame is None:
+        return None
+    content = normalized[frame.end() :]
+    if normalized.startswith("how "):
+        content = re.sub(r"\s+work$", "", content)
+    return content
 
 
 def _relations_for_question(
@@ -179,7 +212,9 @@ def refresh_rule_suggestions(
         pair, left_snapshot, right_snapshot = _pair_snapshot(question, target)
         ranked.append((score, target.id, pair, left_snapshot, right_snapshot))
     ranked.sort(key=lambda row: (-row[0], row[1]))
-    matches = ranked[:MAX_SIMILAR_CANDIDATES]
+    # Detection and persistence must be complete: the limit belongs only to
+    # the review display, otherwise the 21st duplicate could bypass confirmation.
+    matches = ranked
 
     existing = _relations_for_question(session, question_id)
     existing_by_pair = {
@@ -248,7 +283,20 @@ def refresh_rule_suggestions(
         existing_by_pair[pair] = relation
 
     session.flush()
-    return [
+    display_relations = [
         existing_by_pair[pair]
         for _score, _target_id, pair, _left_snapshot, _right_snapshot in matches
     ]
+    display_relations.sort(
+        key=lambda relation: (
+            not (
+                relation.relation_type == "same_question"
+                and relation.decision_status in _UNRESOLVED_RELATION_STATUSES
+            ),
+            -(relation.confidence or 0.0),
+            relation.related_question_id
+            if relation.question_id == question_id
+            else relation.question_id,
+        )
+    )
+    return display_relations[:MAX_SIMILAR_CANDIDATES]

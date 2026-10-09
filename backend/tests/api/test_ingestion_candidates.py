@@ -1559,6 +1559,40 @@ def test_explicit_duplicate_exclusion_allows_candidate_confirmation(
     assert confirmed.get_json()["status"] == "active"
 
 
+def test_all_twenty_one_exact_matches_must_be_reviewed_before_confirmation(client, app):
+    for _ in range(21):
+        assert client.post("/api/v1/questions", json={"text": "What is MCP?"}).status_code == 201
+    fixture = _candidate_fixture(client, app, text="What is MCP?")
+    confirm_url = f"/api/v1/ingestion-candidates/{fixture['candidate_id']}/confirm"
+    payload = {"expected_revision": fixture["revision"]}
+    assert client.post(confirm_url, json=payload).status_code == 409
+    with app.extensions["sqlalchemy_session_factory"].begin() as session:
+        relations = list(session.scalars(select(QuestionRelation).where(
+            QuestionRelation.related_question_id == fixture["candidate_id"]
+        ).order_by(QuestionRelation.id)))
+        assert len(relations) == 21
+        for relation in relations[:20]:
+            relation.decision_status = "rejected"
+            relation.suggested_by = "user"
+    assert client.post(confirm_url, json=payload).status_code == 409
+    with app.extensions["sqlalchemy_session_factory"].begin() as session:
+        relation = session.get(QuestionRelation, relations[-1].id)
+        relation.relation_type = "related_question"
+        relation.decision_status = "accepted"
+        relation.suggested_by = "user"
+    assert client.post(confirm_url, json=payload).status_code == 200
+
+
+def test_template_neighbor_does_not_block_ocr_confirmation(client, app):
+    client.post("/api/v1/questions", json={"text": "How does MCP work?"})
+    fixture = _candidate_fixture(client, app, text="How does RAG work?")
+    response = client.post(
+        f"/api/v1/ingestion-candidates/{fixture['candidate_id']}/confirm",
+        json={"expected_revision": fixture["revision"]},
+    )
+    assert response.status_code == 200
+
+
 def test_manual_ocr_block_candidate_gets_rule_suggestion(client, app):
     active = client.post(
         "/api/v1/questions",
