@@ -2,6 +2,8 @@
 import { computed, onMounted, ref } from "vue";
 import { ApiError, request } from "../api/client";
 import IngestionCandidateEditor from "../components/IngestionCandidateEditor.vue";
+import QuestionRelationReview from "../components/QuestionRelationReview.vue";
+import type { RelationReviewState } from "../api/question-relations";
 import SourceImageViewer from "../components/SourceImageViewer.vue";
 import SourceUpload from "../components/SourceUpload.vue";
 
@@ -104,6 +106,8 @@ const mergeFinalText = ref("");
 const manualCreateOpen = ref(false);
 const manualBlockIds = ref<string[]>([]);
 const manualCandidateText = ref("");
+const relationReviewState = ref<RelationReviewState | null>(null);
+const candidateSelectionRevision = ref(0);
 let jobLoadRevision = 0;
 
 const jobs = computed(() =>
@@ -115,6 +119,18 @@ const selectedJob = computed(() => jobs.value.find((item) => item.id === selecte
 const selectedCandidate = computed(
   () => candidates.value.find((candidate) => candidate.id === selectedCandidateId.value) ?? null,
 );
+const relationContextKey = computed(() => `${selectedJobId.value}:${candidateSelectionRevision.value}:${selectedCandidate.value?.candidate_revision}`);
+const canConfirmSelectedCandidate = computed(() =>
+  relationReviewState.value?.questionId === selectedCandidateId.value &&
+  relationReviewState.value?.contextKey === relationContextKey.value &&
+  relationReviewState.value?.canConfirm === true,
+);
+
+function setRelationReviewState(state: RelationReviewState) {
+  if (state.questionId === selectedCandidateId.value && state.contextKey === relationContextKey.value) {
+    relationReviewState.value = state;
+  }
+}
 const pendingCandidateCount = computed(
   () => candidates.value.filter((candidate) => candidate.candidate_state === "pending_review" && !candidate.archived_at).length,
 );
@@ -313,6 +329,7 @@ async function openJob(
 }
 
 function selectCandidate(candidate: Candidate, preferredSourceId: number | null = null) {
+  candidateSelectionRevision.value += 1;
   selectedCandidateId.value = candidate.id;
   selectedSourceId.value =
     candidate.sources.find((source) => source.question_source_id === preferredSourceId)
@@ -447,6 +464,7 @@ async function candidateDisposition(
   action: "archive" | "confirm",
   payload: { expected_revision: number },
 ) {
+  if (action === "confirm" && !canConfirmSelectedCandidate.value) return;
   if (selectedCandidateId.value === null || selectedJobId.value === null) return;
   const jobId = selectedJobId.value;
   const candidateId = selectedCandidateId.value;
@@ -467,7 +485,9 @@ async function candidateDisposition(
     if (selectedJobId.value !== jobId) return;
     if (error instanceof ApiError && error.status === 409) {
       await refreshCurrentJob(candidateId, sourceId, jobId);
-      setHistoryErrorForJob(jobId, "候选内容已变化，请刷新后重试。");
+      setHistoryErrorForJob(jobId, error.fields.similar_questions
+        ? "请先处理相似题建议；同题需等待规范题归并功能，或明确排除/标记相关或不同后再确认。"
+        : "候选内容已变化，请刷新后重试。");
     } else if (
       action === "confirm" &&
       error instanceof ApiError &&
@@ -718,6 +738,15 @@ onMounted(loadSources);
         </label>
         <button type="submit" :disabled="candidateBusy">合并所选候选题</button>
       </form>
+      <QuestionRelationReview
+        v-if="selectedCandidate && selectedCandidate.candidate_state === 'pending_review' && !selectedCandidate.archived_at && selectedCandidate.status === 'pending_review'"
+        :key="`${selectedCandidate.id}:${relationContextKey}`"
+        :question-id="selectedCandidate.id"
+        :text="selectedCandidate.text"
+        :context-key="relationContextKey"
+        :disabled="candidateBusy"
+        @state="setRelationReviewState"
+      />
       <IngestionCandidateEditor
         v-if="
           selectedCandidate &&
@@ -730,6 +759,7 @@ onMounted(loadSources);
         :tags="tags"
         :selected-source-id="selectedSourceId"
         :busy="candidateBusy"
+        :confirmation-blocked="!canConfirmSelectedCandidate"
         @select-source="selectedSourceId = $event"
         @save="patchCandidate"
         @split="splitCandidate"

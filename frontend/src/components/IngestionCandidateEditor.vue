@@ -35,6 +35,7 @@ const props = withDefaults(
     tags?: TopicTag[];
     selectedSourceId?: number | null;
     busy?: boolean;
+    confirmationBlocked?: boolean;
   }>(),
   { topics: () => [], tags: () => [], selectedSourceId: null, busy: false },
 );
@@ -317,7 +318,7 @@ function split() {
     <button
       type="button"
       aria-label="确认进入题库"
-      :disabled="busy"
+      :disabled="busy || confirmationBlocked"
       @click="emit('confirm', { expected_revision: candidate.candidate_revision })"
     >
       确认进入题库

@@ -3,6 +3,7 @@ import { computed, ref, watch } from "vue";
 import { useRoute } from "vue-router";
 import { ApiError, request } from "../api/client";
 import SourceImageViewer from "../components/SourceImageViewer.vue";
+import QuestionRelationReview from "../components/QuestionRelationReview.vue";
 import QuestionForm from "../components/QuestionForm.vue";
 import TopicTagPicker from "../components/TopicTagPicker.vue";
 
@@ -332,6 +333,12 @@ watch(questionId, () => void loadQuestion(), { immediate: true });
         :topics="topics"
         :tags="tags"
         @save="update"
+      />
+      <QuestionRelationReview
+        v-if="question.status === 'active' && !question.archived_at"
+        :key="question.id"
+        :question-id="question.id"
+        :text="question.text"
       />
       <section aria-label="题目来源证据">
         <h3>截图来源与 OCR 证据</h3>

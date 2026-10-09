@@ -3,6 +3,7 @@ import { defineComponent, h } from "vue";
 import { describe, expect, it, vi } from "vitest";
 import { createMemoryHistory } from "vue-router";
 import { createAppRouter } from "../src/router";
+import { emptySimilarityResponse } from "./fixtures/similarity";
 
 const topics = [{ id: 1, name: "RAG", is_active: true }];
 const tags = [{ id: 2, name: "Retrieval", is_active: true }];
@@ -73,6 +74,8 @@ function questionFetchMock(
 ): typeof fetch {
   return vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const path = String(input);
+    const similar = emptySimilarityResponse(path);
+    if (similar) return similar;
     const custom = override(path, init);
     if (custom) return custom;
     if (path === "/api/v1/topics" || path === "/api/v1/tags") return jsonResponse([]);
@@ -114,6 +117,8 @@ describe("manual question bank", () => {
     const match = makeQuestion(11, "MCP 通信协议如何工作？");
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const path = String(input);
+      const similar = emptySimilarityResponse(path);
+      if (similar) return similar;
       if (path === "/api/v1/topics" || path === "/api/v1/tags") {
         return { ok: true, status: 200, json: async () => [] } as Response;
       }
@@ -148,6 +153,8 @@ describe("manual question bank", () => {
     let archived = false;
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const path = String(input);
+      const similar = emptySimilarityResponse(path);
+      if (similar) return similar;
       const method = init?.method ?? "GET";
       if (path === "/api/v1/topics") return { ok: true, status: 200, json: async () => topics } as Response;
       if (path === "/api/v1/tags") return { ok: true, status: 200, json: async () => tags } as Response;
@@ -232,6 +239,8 @@ describe("manual question bank", () => {
     const Page = pageModule!.default;
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const path = String(input);
+      const similar = emptySimilarityResponse(path);
+      if (similar) return similar;
       if (path === "/api/v1/topics" || path === "/api/v1/tags") {
         return { ok: true, status: 200, json: async () => [] } as Response;
       }
@@ -275,6 +284,8 @@ describe("manual question bank", () => {
       "fetch",
       vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
         const path = String(input);
+        const similar = emptySimilarityResponse(path);
+        if (similar) return similar;
         if (path === "/api/v1/questions/1" && (init?.method ?? "GET") === "GET") {
           return { ok: true, status: 200, json: async () => question } as Response;
         }
@@ -320,6 +331,8 @@ describe("manual question bank", () => {
     let patchCount = 0;
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const path = String(input);
+      const similar = emptySimilarityResponse(path);
+      if (similar) return similar;
       if (path === "/api/v1/questions/1" && (init?.method ?? "GET") === "GET") {
         return { ok: true, status: 200, json: async () => question } as Response;
       }
@@ -380,6 +393,8 @@ describe("manual question bank", () => {
       "fetch",
       vi.fn(async (input: RequestInfo | URL) => {
         const path = String(input);
+        const similar = emptySimilarityResponse(path);
+        if (similar) return similar;
         if (path === "/api/v1/questions/1") {
           detailAttempts += 1;
           if (detailAttempts === 1) {
@@ -478,6 +493,8 @@ describe("manual question bank", () => {
     ];
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const path = String(input);
+      const similar = emptySimilarityResponse(path);
+      if (similar) return similar;
       if (path === "/api/v1/questions/1") {
         return { ok: true, status: 200, json: async () => question } as Response;
       }
@@ -546,6 +563,8 @@ describe("manual question bank", () => {
       "fetch",
       vi.fn(async (input: RequestInfo | URL) => {
         const path = String(input);
+        const similar = emptySimilarityResponse(path);
+        if (similar) return similar;
         if (path === "/api/v1/questions/1") {
           return { ok: true, status: 200, json: async () => makeQuestion(1, "Question with source") } as Response;
         }
@@ -597,6 +616,8 @@ describe("manual question bank", () => {
       "fetch",
       vi.fn(async (input: RequestInfo | URL) => {
         const path = String(input);
+        const similar = emptySimilarityResponse(path);
+        if (similar) return similar;
         if (path === "/api/v1/questions/1") {
           return { ok: true, status: 200, json: async () => makeQuestion(1, "Manual question") } as Response;
         }
@@ -649,6 +670,8 @@ describe("manual question bank", () => {
     }];
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const path = String(input);
+      const similar = emptySimilarityResponse(path);
+      if (similar) return similar;
       const questionMatch = path.match(/^\/api\/v1\/questions\/(\d+)(?:\/([^/]+))?$/);
       if (questionMatch && !questionMatch[2]) {
         const id = Number(questionMatch[1]);

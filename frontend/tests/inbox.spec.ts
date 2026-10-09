@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 import { createMemoryHistory } from "vue-router";
 import SourceImageViewer from "../src/components/SourceImageViewer.vue";
 import { createAppRouter } from "../src/router";
+import { emptySimilarityResponse } from "./fixtures/similarity";
 
 const RouterLinkStub = defineComponent({
   props: ["to"],
@@ -152,6 +153,8 @@ describe("screenshot inbox and OCR viewer", () => {
     const runIds: number[] = [];
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const path = String(input);
+      const similar = emptySimilarityResponse(path);
+      if (similar) return similar;
       if (path === "/api/v1/sources" && !init?.method) {
         return { ok: true, status: 200, json: async () => [] } as Response;
       }
@@ -200,6 +203,8 @@ describe("screenshot inbox and OCR viewer", () => {
     let statusReads = 0;
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const path = String(input);
+      const similar = emptySimilarityResponse(path);
+      if (similar) return similar;
       if (path === "/api/v1/sources" && !init?.method) {
         return { ok: true, status: 200, json: async () => [] } as Response;
       }
@@ -242,6 +247,8 @@ describe("screenshot inbox and OCR viewer", () => {
     const requests: string[] = [];
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const path = String(input);
+      const similar = emptySimilarityResponse(path);
+      if (similar) return similar;
       requests.push(path);
       if (path === "/api/v1/sources" || path === "/api/v1/topics" || path === "/api/v1/tags") {
         return { ok: true, status: 200, json: async () => path === "/api/v1/sources" ? records : [] } as Response;
@@ -278,6 +285,8 @@ describe("screenshot inbox and OCR viewer", () => {
     const blocksBResponse = deferred<Response>();
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const path = String(input);
+      const similar = emptySimilarityResponse(path);
+      if (similar) return similar;
       if (path === "/api/v1/sources") {
         return { ok: true, status: 200, json: async () => records } as Response;
       }
@@ -317,6 +326,8 @@ describe("screenshot inbox and OCR viewer", () => {
     const candidateD = { ...candidateB, id: 202, text: "Job 12 candidate D" };
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const path = String(input);
+      const similar = emptySimilarityResponse(path);
+      if (similar) return similar;
       if (path === "/api/v1/sources") return { ok: true, status: 200, json: async () => records } as Response;
       if (path === "/api/v1/topics" || path === "/api/v1/tags") return { ok: true, status: 200, json: async () => [] } as Response;
       if (path === "/api/v1/ingestions/11/candidates") return { ok: true, status: 200, json: async () => [candidateA] } as Response;
@@ -355,6 +366,8 @@ describe("screenshot inbox and OCR viewer", () => {
     const candidateD = { ...candidateB, id: 202, text: "Job 12 candidate D" };
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const path = String(input);
+      const similar = emptySimilarityResponse(path);
+      if (similar) return similar;
       if (path === "/api/v1/sources") return { ok: true, status: 200, json: async () => records } as Response;
       if (path === "/api/v1/topics" || path === "/api/v1/tags") return { ok: true, status: 200, json: async () => [] } as Response;
       if (path === "/api/v1/ingestions/11/candidates") return { ok: true, status: 200, json: async () => [candidateA] } as Response;
@@ -394,6 +407,8 @@ describe("screenshot inbox and OCR viewer", () => {
     const records = [source(1, [job(11, "succeeded", 1)])];
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const path = String(input);
+      const similar = emptySimilarityResponse(path);
+      if (similar) return similar;
       if (path === "/api/v1/sources") {
         return { ok: true, status: 200, json: async () => records } as Response;
       }
@@ -444,6 +459,8 @@ describe("screenshot inbox and OCR viewer", () => {
     ];
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const path = String(input);
+      const similar = emptySimilarityResponse(path);
+      if (similar) return similar;
       if (path === "/api/v1/sources") return { ok: true, status: 200, json: async () => records } as Response;
       if (path === "/api/v1/topics" || path === "/api/v1/tags") return { ok: true, status: 200, json: async () => [] } as Response;
       if (path === "/api/v1/ingestions/11/candidates") return { ok: true, status: 200, json: async () => candidates } as Response;
@@ -797,6 +814,8 @@ describe("screenshot inbox and OCR viewer", () => {
     let mergedCandidates = false;
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const path = String(input);
+      const similar = emptySimilarityResponse(path);
+      if (similar) return similar;
       if (path === "/api/v1/sources") {
         return { ok: true, status: 200, json: async () => records } as Response;
       }
@@ -866,6 +885,8 @@ describe("screenshot inbox and OCR viewer", () => {
     const edited = { ...candidateB, id: 102, text: "Edited text", candidate_revision: 1 };
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const path = String(input);
+      const similar = emptySimilarityResponse(path);
+      if (similar) return similar;
       if (path === "/api/v1/sources") return { ok: true, status: 200, json: async () => records } as Response;
       if (path === "/api/v1/topics" || path === "/api/v1/tags") return { ok: true, status: 200, json: async () => [] } as Response;
       if (path === "/api/v1/ingestions/11/candidates") {
@@ -906,6 +927,8 @@ describe("screenshot inbox and OCR viewer", () => {
     const records = [source(1, [job(11, "succeeded", 1)])];
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const path = String(input);
+      const similar = emptySimilarityResponse(path);
+      if (similar) return similar;
       if (path === "/api/v1/sources") return { ok: true, status: 200, json: async () => records } as Response;
       if (path === "/api/v1/topics" || path === "/api/v1/tags") return { ok: true, status: 200, json: async () => [] } as Response;
       if (path === "/api/v1/ingestions/11/candidates") return { ok: true, status: 200, json: async () => [candidateA] } as Response;
@@ -939,6 +962,8 @@ describe("screenshot inbox and OCR viewer", () => {
     const confirmedCandidate = { ...candidateA, status: "active", candidate_state: "confirmed", candidate_revision: 1 };
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const path = String(input);
+      const similar = emptySimilarityResponse(path);
+      if (similar) return similar;
       if (path === "/api/v1/sources") return { ok: true, status: 200, json: async () => records } as Response;
       if (path === "/api/v1/topics" || path === "/api/v1/tags") return { ok: true, status: 200, json: async () => [] } as Response;
       if (path === "/api/v1/ingestions/11/candidates") return { ok: true, status: 200, json: async () => [confirmed ? confirmedCandidate : candidateA] } as Response;
@@ -984,6 +1009,8 @@ describe("screenshot inbox and OCR viewer", () => {
     let splitDone = false;
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const path = String(input);
+      const similar = emptySimilarityResponse(path);
+      if (similar) return similar;
       if (path === "/api/v1/sources") return { ok: true, status: 200, json: async () => records } as Response;
       if (path === "/api/v1/topics" || path === "/api/v1/tags") return { ok: true, status: 200, json: async () => [] } as Response;
       if (path === "/api/v1/ingestions/11/candidates") return { ok: true, status: 200, json: async () => splitDone ? [parent, firstChild, secondChild] : [candidateA] } as Response;
@@ -1018,6 +1045,8 @@ describe("screenshot inbox and OCR viewer", () => {
     };
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const path = String(input);
+      const similar = emptySimilarityResponse(path);
+      if (similar) return similar;
       if (path === "/api/v1/sources") return { ok: true, status: 200, json: async () => [source(1, [job(11, "succeeded", 1)])] } as Response;
       if (path === "/api/v1/topics" || path === "/api/v1/tags") return { ok: true, status: 200, json: async () => [] } as Response;
       if (path === "/api/v1/ingestions/11/candidates") return { ok: true, status: 200, json: async () => [inactiveCandidate] } as Response;
@@ -1060,6 +1089,8 @@ describe("screenshot inbox and OCR viewer", () => {
     };
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const path = String(input);
+      const similar = emptySimilarityResponse(path);
+      if (similar) return similar;
       if (path === "/api/v1/sources") return { ok: true, status: 200, json: async () => [source(1, [job(11, "succeeded", 1)])] } as Response;
       if (path === "/api/v1/topics" || path === "/api/v1/tags") return { ok: true, status: 200, json: async () => [] } as Response;
       if (path === "/api/v1/ingestions/11/candidates") return { ok: true, status: 200, json: async () => [parent, child, mergedLoser] } as Response;
@@ -1108,6 +1139,8 @@ describe("screenshot inbox and OCR viewer", () => {
     };
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const path = String(input);
+      const similar = emptySimilarityResponse(path);
+      if (similar) return similar;
       if (path === "/api/v1/sources") {
         return { ok: true, status: 200, json: async () => records } as Response;
       }
@@ -1141,6 +1174,8 @@ describe("screenshot inbox and OCR viewer", () => {
     let submitted: Record<string, unknown> | null = null;
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const path = String(input);
+      const similar = emptySimilarityResponse(path);
+      if (similar) return similar;
       if (path === "/api/v1/sources") {
         return { ok: true, status: 200, json: async () => records } as Response;
       }
