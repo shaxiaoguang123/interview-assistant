@@ -6,6 +6,7 @@ from sqlalchemy import (
     Boolean,
     CheckConstraint,
     DateTime,
+    Float,
     ForeignKey,
     Index,
     Integer,
@@ -26,6 +27,12 @@ class Question(Base):
     __table_args__ = (
         CheckConstraint("status IN ('pending_review', 'active', 'merged')", name="ck_question_status"),
         CheckConstraint(
+            "(status = 'merged' AND merged_into_question_id IS NOT NULL "
+            "AND merged_into_question_id <> id) OR "
+            "(status <> 'merged' AND merged_into_question_id IS NULL)",
+            name="ck_question_merged_into_status",
+        ),
+        CheckConstraint(
             "ingestion_candidate_state IS NULL OR "
             "ingestion_candidate_state IN ('pending_review', 'confirmed', 'rejected', 'superseded')",
             name="ck_question_ingestion_candidate_state",
@@ -43,6 +50,7 @@ class Question(Base):
         ),
         Index("ix_question_normalized_hash", "normalized_hash"),
         Index("ix_question_status_archived_at", "status", "archived_at"),
+        Index("ix_question_merged_into_question_id", "merged_into_question_id"),
         Index("ix_question_origin_ingestion_job_id", "origin_ingestion_job_id"),
         Index("ix_question_split_from_candidate_id", "split_from_candidate_id"),
         Index("ix_question_superseded_by_candidate_id", "superseded_by_candidate_id"),
@@ -70,6 +78,14 @@ class Question(Base):
     )
     superseded_by_candidate_id: Mapped[int | None] = mapped_column(
         ForeignKey("question.id", ondelete="RESTRICT"), nullable=True
+    )
+    merged_into_question_id: Mapped[int | None] = mapped_column(
+        ForeignKey(
+            "question.id",
+            name="fk_question_merged_into_question_id",
+            ondelete="RESTRICT",
+        ),
+        nullable=True,
     )
     archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
@@ -113,8 +129,123 @@ class Question(Base):
         foreign_keys=[superseded_by_candidate_id],
         back_populates="superseded_by_candidate",
     )
+    merged_into_question: Mapped[Question | None] = relationship(
+        "Question",
+        remote_side=[id],
+        foreign_keys=[merged_into_question_id],
+        back_populates="merged_children",
+    )
+    merged_children: Mapped[list[Question]] = relationship(
+        "Question",
+        foreign_keys=[merged_into_question_id],
+        back_populates="merged_into_question",
+    )
     source_rows: Mapped[list["QuestionSource"]] = relationship(
         "QuestionSource", back_populates="question"
+    )
+    relations_as_question: Mapped[list["QuestionRelation"]] = relationship(
+        "QuestionRelation",
+        foreign_keys="QuestionRelation.question_id",
+        back_populates="question",
+    )
+    relations_as_related_question: Mapped[list["QuestionRelation"]] = relationship(
+        "QuestionRelation",
+        foreign_keys="QuestionRelation.related_question_id",
+        back_populates="related_question",
+    )
+
+
+class QuestionRelation(Base):
+    __tablename__ = "question_relation"
+    __table_args__ = (
+        CheckConstraint(
+            "question_id < related_question_id",
+            name="ck_question_relation_ascending_pair",
+        ),
+        CheckConstraint(
+            "relation_type IN ('same_question', 'related_question', 'different_question')",
+            name="ck_question_relation_type",
+        ),
+        CheckConstraint(
+            "decision_status IN ('suggested', 'accepted', 'rejected')",
+            name="ck_question_relation_decision_status",
+        ),
+        CheckConstraint(
+            "suggested_by IN ('rule', 'llm', 'user')",
+            name="ck_question_relation_suggested_by",
+        ),
+        CheckConstraint(
+            "confidence IS NULL OR (confidence >= 0 AND confidence <= 1)",
+            name="ck_question_relation_confidence",
+        ),
+        CheckConstraint(
+            "length(question_text_sha256_snapshot) = 64 AND "
+            "question_text_sha256_snapshot NOT GLOB '*[^0-9a-f]*' AND "
+            "length(related_question_text_sha256_snapshot) = 64 AND "
+            "related_question_text_sha256_snapshot NOT GLOB '*[^0-9a-f]*'",
+            name="ck_question_relation_text_sha256",
+        ),
+        UniqueConstraint(
+            "question_id",
+            "related_question_id",
+            name="uq_question_relation_pair",
+        ),
+        Index(
+            "ix_question_relation_related_question_id",
+            "related_question_id",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    question_id: Mapped[int] = mapped_column(
+        ForeignKey(
+            "question.id",
+            name="fk_question_relation_question_id",
+            ondelete="RESTRICT",
+        ),
+        nullable=False,
+    )
+    related_question_id: Mapped[int] = mapped_column(
+        ForeignKey(
+            "question.id",
+            name="fk_question_relation_related_question_id",
+            ondelete="RESTRICT",
+        ),
+        nullable=False,
+    )
+    relation_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    decision_status: Mapped[str] = mapped_column(String(24), nullable=False)
+    suggested_by: Mapped[str] = mapped_column(String(24), nullable=False)
+    confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
+    question_text_sha256_snapshot: Mapped[str] = mapped_column(
+        String(64), nullable=False
+    )
+    related_question_text_sha256_snapshot: Mapped[str] = mapped_column(
+        String(64), nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=utc_now,
+        server_default=func.current_timestamp(),
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=utc_now,
+        onupdate=utc_now,
+        server_default=func.current_timestamp(),
+    )
+
+    question: Mapped[Question] = relationship(
+        "Question",
+        foreign_keys=[question_id],
+        back_populates="relations_as_question",
+    )
+    related_question: Mapped[Question] = relationship(
+        "Question",
+        foreign_keys=[related_question_id],
+        back_populates="relations_as_related_question",
     )
 
 

@@ -5,7 +5,7 @@ import uuid
 import pytest
 from alembic import command
 from alembic.config import Config
-from sqlalchemy import inspect, select
+from sqlalchemy import inspect, select, text
 from sqlalchemy.engine import URL
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -263,3 +263,243 @@ def test_source_storage_root_is_under_configured_app_data_dir(tmp_path, monkeypa
     configured_root = tmp_path / "custom-local-data"
     monkeypatch.setenv("APP_DATA_DIR", str(configured_root))
     assert config.default_source_storage_dir() == configured_root / "sources"
+
+
+def test_phase1c_question_and_relation_models_are_registered(tmp_path):
+    question_models = import_module("app.models.question")
+    from app import models as model_package
+
+    assert hasattr(question_models.Question, "merged_into_question_id")
+    assert hasattr(question_models, "QuestionRelation")
+    assert "QuestionRelation" in model_package.__all__
+
+    app = _migrated_app(tmp_path / "phase1c-schema.sqlite3")
+    engine = app.extensions["sqlalchemy_engine"]
+    try:
+        inspector = inspect(engine)
+        question_columns = {
+            column["name"] for column in inspector.get_columns("question")
+        }
+        assert "merged_into_question_id" in question_columns
+        assert "question_relation" in inspector.get_table_names()
+
+        with engine.connect() as connection:
+            question_fks = connection.exec_driver_sql(
+                "PRAGMA foreign_key_list(question)"
+            ).all()
+            relation_fks = connection.exec_driver_sql(
+                "PRAGMA foreign_key_list(question_relation)"
+            ).all()
+        assert any(
+            fk[2] == "question"
+            and fk[3] == "merged_into_question_id"
+            and fk[6] == "RESTRICT"
+            for fk in question_fks
+        )
+        assert {
+            (fk[3], fk[2], fk[6])
+            for fk in relation_fks
+        } == {
+            ("question_id", "question", "RESTRICT"),
+            ("related_question_id", "question", "RESTRICT"),
+        }
+
+        question_indexes = inspect(engine).get_indexes("question")
+        hash_indexes = [
+            index for index in question_indexes
+            if index["column_names"] == ["normalized_hash"]
+        ]
+        assert hash_indexes and all(not index.get("unique", False) for index in hash_indexes)
+        relation_indexes = inspect(engine).get_indexes("question_relation")
+        assert any(
+            index["name"] == "ix_question_merged_into_question_id"
+            for index in question_indexes
+        )
+        assert any(
+            index["name"] == "ix_question_relation_related_question_id"
+            for index in relation_indexes
+        )
+        assert any(
+            constraint["column_names"] == ["question_id", "related_question_id"]
+            for constraint in inspect(engine).get_unique_constraints("question_relation")
+        )
+    finally:
+        engine.dispose()
+
+
+def test_question_merge_pointer_constraints_reject_invalid_states_and_targets(tmp_path):
+    _phase1b_models()
+    question_model = import_module("app.models.question").Question
+    app = _migrated_app(tmp_path / "question-merge-pointer.sqlite3")
+    engine = app.extensions["sqlalchemy_engine"]
+    try:
+        with Session(engine) as session:
+            root = _question(id=1, text="Canonical root")
+            pending_target = _question(id=2, text="Pending target", status="pending_review")
+            archived_target = _question(id=3, text="Archived target")
+            archived_target.archived_at = utc_now_for_test()
+            merged_target = _question(
+                id=4,
+                text="Already merged target",
+                status="merged",
+                merged_into_question_id=1,
+            )
+            session.add_all([root, pending_target, archived_target, merged_target])
+            session.commit()
+
+        invalid_rows = [
+            _question(
+                id=10,
+                text="Active row with pointer",
+                status="active",
+                merged_into_question_id=1,
+            ),
+            _question(id=11, text="Merged row without pointer", status="merged"),
+            _question(
+                id=12,
+                text="Self pointer",
+                status="merged",
+                merged_into_question_id=12,
+            ),
+            _question(
+                id=13,
+                text="Missing target",
+                status="merged",
+                merged_into_question_id=999,
+            ),
+            _question(
+                id=14,
+                text="Pending target pointer",
+                status="merged",
+                merged_into_question_id=2,
+            ),
+            _question(
+                id=15,
+                text="Pending target pointer",
+                status="merged",
+                merged_into_question_id=3,
+            ),
+            _question(
+                id=16,
+                text="Merged target pointer",
+                status="merged",
+                merged_into_question_id=4,
+            ),
+        ]
+        for invalid in invalid_rows:
+            with Session(engine) as session:
+                session.add(invalid)
+                with pytest.raises(IntegrityError):
+                    session.flush()
+                session.rollback()
+
+        with Session(engine) as session:
+            valid_child = _question(
+                id=20,
+                text="Valid merged child",
+                status="merged",
+                merged_into_question_id=1,
+            )
+            session.add(valid_child)
+            session.commit()
+            assert session.get(question_model, 20).merged_into_question_id == 1
+
+            replacement_root = _question(id=21, text="Replacement root")
+            session.add(replacement_root)
+            session.commit()
+            replacement_root_id = replacement_root.id
+
+            current_root = session.get(question_model, 1)
+            current_root.status = "merged"
+            current_root.merged_into_question_id = replacement_root_id
+            with pytest.raises(IntegrityError):
+                session.flush()
+            session.rollback()
+    finally:
+        engine.dispose()
+
+
+def utc_now_for_test():
+    from datetime import datetime, timezone
+
+    return datetime.now(timezone.utc)
+
+
+def test_question_relation_sqlite_constraints_and_bidirectional_relationships(tmp_path):
+    question_models = import_module("app.models.question")
+    relation_model = getattr(question_models, "QuestionRelation")
+    app = _migrated_app(tmp_path / "question-relation-constraints.sqlite3")
+    engine = app.extensions["sqlalchemy_engine"]
+    try:
+        with Session(engine) as session:
+            first = _question(id=1, text="First question")
+            second = _question(id=2, text="Second question")
+            session.add_all([first, second])
+            session.commit()
+
+        def insert_relation(
+            question_id=1,
+            related_question_id=2,
+            relation_type="same_question",
+            decision_status="suggested",
+            suggested_by="rule",
+            confidence=1.0,
+            left_snapshot="a" * 64,
+            right_snapshot="b" * 64,
+        ):
+            with engine.begin() as connection:
+                connection.execute(
+                    text(
+                        "INSERT INTO question_relation "
+                        "(question_id, related_question_id, relation_type, "
+                        "decision_status, suggested_by, confidence, "
+                        "question_text_sha256_snapshot, "
+                        "related_question_text_sha256_snapshot) "
+                        "VALUES (:question_id, :related_question_id, :relation_type, "
+                        ":decision_status, :suggested_by, :confidence, "
+                        ":left_snapshot, :right_snapshot)"
+                    ),
+                    {
+                        "question_id": question_id,
+                        "related_question_id": related_question_id,
+                        "relation_type": relation_type,
+                        "decision_status": decision_status,
+                        "suggested_by": suggested_by,
+                        "confidence": confidence,
+                        "left_snapshot": left_snapshot,
+                        "right_snapshot": right_snapshot,
+                    },
+                )
+
+        invalid_rows = [
+            {"question_id": 1, "related_question_id": 1},
+            {"question_id": 2, "related_question_id": 1},
+            {"question_id": 999},
+            {"related_question_id": 999},
+            {"relation_type": "duplicate"},
+            {"decision_status": "merged"},
+            {"suggested_by": "automatic"},
+            {"confidence": -0.01},
+            {"confidence": 1.01},
+            {"left_snapshot": "not-a-sha256"},
+        ]
+        for overrides in invalid_rows:
+            with pytest.raises(IntegrityError):
+                insert_relation(**overrides)
+
+        insert_relation(confidence=None)
+        with pytest.raises(IntegrityError):
+            insert_relation()
+
+        with Session(engine) as session:
+            stored_relation = session.scalar(select(relation_model))
+            first = session.get(question_models.Question, 1)
+            second = session.get(question_models.Question, 2)
+            assert first.relations_as_question == [stored_relation]
+            assert second.relations_as_related_question == [stored_relation]
+            assert stored_relation.question.id == first.id
+            assert stored_relation.related_question.id == second.id
+            assert stored_relation.created_at is not None
+            assert stored_relation.updated_at is not None
+    finally:
+        engine.dispose()
