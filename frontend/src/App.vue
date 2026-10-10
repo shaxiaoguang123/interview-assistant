@@ -11,6 +11,7 @@ const navigation = [
   {to:"/inbox",label:"截图收件箱",icon:"inbox",hint:"采集与审核"},
   {to:"/taxonomy",label:"分类管理",icon:"taxonomy",hint:"Topic 与 Tag"},
   {to:"/practice",label:"练习",icon:"practice",hint:"组织与表达"},
+  {to:"/progress",label:"学习进度",icon:"progress",hint:"复习与薄弱知识点"},
 ] as const;
 const activePath = computed(() => route.path.startsWith('/questions') ? '/' : navigation.find(n => n.to !== '/' && route.path.startsWith(n.to))?.to ?? '/');
 const healthLabel = computed(() => healthStatus.value === 'ok' ? '后端已连接' : healthStatus.value === 'checking' ? '正在检查连接' : '后端暂不可用');

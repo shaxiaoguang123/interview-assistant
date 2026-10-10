@@ -34,3 +34,6 @@ uploads/
 /tmp-screenshots/
 # Phase 2 synthetic browser data, screenshots and local logs
 .superpowers/sdd/phase-2-saved-answers/
+
+# Phase 3 isolated browser evidence and synthetic database
+.superpowers/sdd/phase-3-practice-review/
