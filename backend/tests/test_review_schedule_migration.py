@@ -44,7 +44,7 @@ def snapshot(engine):
 def test_0005_upgrade_keeps_sessions_answers_reviews_flags_and_fts(tmp_path):
     cfg,engine,url=old_database(tmp_path)
     columns,before,triggers=snapshot(engine)
-    command.upgrade(cfg,'head')
+    command.upgrade(cfg,'0006_phase3_review_schedule')
     with engine.begin() as c:
         for table in columns:
             assert c.exec_driver_sql(f'SELECT {columns[table]} FROM {table} ORDER BY 1').all()==before[table]
@@ -72,12 +72,12 @@ def test_failed_backfill_rolls_back_check_change_columns_and_data(tmp_path):
         c.exec_driver_sql("CREATE TRIGGER fail_backfill BEFORE UPDATE ON question_state BEGIN SELECT RAISE(ABORT,'test backfill failure'); END")
     columns,before,triggers=snapshot(engine)
     with pytest.raises(Exception,match='test backfill failure'):
-        command.upgrade(cfg,'head')
+        command.upgrade(cfg,'0006_phase3_review_schedule')
     assert snapshot(engine)==(columns,before,triggers)
     with engine.begin() as c:
         assert c.exec_driver_sql('SELECT version_num FROM alembic_version').scalar()=='0005_saved_answers'
         assert c.exec_driver_sql("SELECT count(*) FROM sqlite_master WHERE name='_alembic_tmp_practice_session'").scalar()==0
         assert c.exec_driver_sql('PRAGMA foreign_key_check').all()==[]
         c.exec_driver_sql('DROP TRIGGER fail_backfill')
-    command.upgrade(cfg,'head')
+    command.upgrade(cfg,'0006_phase3_review_schedule')
     engine.dispose()

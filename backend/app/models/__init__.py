@@ -23,3 +23,6 @@ __all__ = [
     "Tag",
     "Topic",
 ]
+
+from .material import Project, Material, MaterialVersion, MaterialChunk
+from .assistant import AssistantOutput, AssistantOutputSource
