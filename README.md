@@ -31,6 +31,33 @@
 
 新增 API：`GET /api/v1/progress?window_days=30`、`GET /api/v1/practice-options`、`POST /api/v1/practice-sessions/preview`（mode、filters）；原创建练习接口接受六种模式。新会话 `selector_version=v2`，旧会话固定顺序不改变。
 
+## Phase 4：项目、资料与 AI 辅助
+
+- 「项目经历」维护名称、简介、技术栈、个人职责、难点、成果和亮点。创建及事实变更自动追加唯一 Project Profile 的版本；备注不进入 Profile，状态与备注修改不产生事实版本。
+- 「资料库」支持 UTF-8 TXT / Markdown、可提取文字的 PDF、DOCX（含表格），单文件最多 10 MB、解析文字最多 500,000 字。扫描型或加密 PDF 提示不能提取，不会创建伪成功版本。原文件、SHA-256、页码和文本片段保留，可切换旧版本。
+- 可关联项目、设置有效状态、关闭「允许加入 AI 上下文」、归档。系统 Profile 只能通过项目表单修改事实，单独可设置上下文开关。
+- 模型使用独立 OpenAI-compatible Chat Completions Adapter。通过本机环境变量配置 `LLM_BASE_URL`、`LLM_API_KEY`、`LLM_MODEL`；「模型设置」可查看配置、测试文本连接或应用本次进程配置。密钥不返回前端，表单提交后清空；进程配置重启后不保留。
+- 题目详情、保存回答和练习草稿均提供 AI 润色、参考答案与分析。先预览实际发送的资料片段，再明确生成；不选择资料时只发送题目和相关回答。
+- Project 选择展开当前有效、允许上下文且未归档的资料；可单独排除文件。只在选中的当前版本检索，采用 SQLite FTS5 和关键词回退。无命中时明确标记为选中资料摘要，不宣称高相关。
+- 结果默认是临时预览，最多保留 30 分钟、32 条，服务重启或刷新前端会丢失未保存界面状态。明确保存后才创建 AssistantOutput；可独立保存参考答案/分析，之后将参考答案整理为自己的回答。
+- 润色追加新版本，原文保留。直接保存 AI 参考原文标为 `ai_generated`，修改后保存、润色或继续编辑 AI 回答标为 `ai_assisted`；记录原版本和输出关联。新版本不继承质量评分。
+- 练习中应用 AI 结果仍是临时草稿；完成掌握度后明确保存时保留 AI 来源及实际 SessionItem / PracticeReview。AI 不创建掌握度事件，不改变质量评分、置顶、复习日期或队列。
+- 保存输出记录实际 MaterialVersion、Chunk、Project 和标题/hash 快照，不保存完整模型请求或隐藏资料全文。资料更新后，旧输出继续引用旧版本。
+
+升级使用 `cd backend && alembic upgrade head`。`0007_project_material_assistant` 新增证据与输出表、资料 FTS，以及不可变版本与输出关联校验触发器；既有 Question、Review、SessionItem、SavedAnswer 和 FTS 原位保留。资料存储在 APP_DATA_DIR 的 `materials/` 中，不使用客户端磁盘路径。
+
+```text
+LLM_BASE_URL=https://your-provider.example/v1
+LLM_API_KEY=your-local-secret
+LLM_MODEL=gpt-6-luna
+```
+
+上述均为格式示例。不要将真实凭据、简历、数据库或项目文档提交 Git。缺少模型配置不影响资料管理及普通练习。
+
+新增主要 API：`/projects`、`/projects/{id}/materials`、`/materials`、`/materials/{id}/versions`、`/material-versions/{id}`、`/materials/search`；`/llm/config`、`/llm/test`；`/assistant/context-preview`、`/assistant/polish`、`/assistant/reference-answer`、`/assistant/analyze`、`/assistant/previews/{id}/save`；`/questions/{id}/assistant-outputs`。所有路径均位于 `/api/v1` 下。
+
+Project 与 Material 以归档为主要清理方式。有历史 AssistantOutputSource 引用的资料不能永久删除；无依赖的普通资料可通过 deletion-impact / 带 confirm=true 的 DELETE API 删除。系统 Profile 不能单独删除。
+
 ## 开发环境
 
 当前仓库按 `AGENTS.md` 使用已有 Conda 环境 `test` 开发；Conda 是本机开发约定，不是产品运行要求。若当前 zsh 尚未载入 Conda hook，只在当前终端载入：
@@ -186,7 +213,7 @@ npm --prefix frontend test
 npm --prefix frontend run build
 ```
 
-当前实现范围是 Phase 0–3：题库、OCR、规则相似题审核与人工 Canonical Merge、保存回答和固定间隔复习。Phase 1B 不包含 VLM/LLM 自动提题或分类、自动语义归并、SavedAnswer、Project/Resume/Material、LLM 参考答案、模拟面试、语音/视频、多 Agent 或社交平台自动采集。
+当前实现范围是 Phase 0–4：题库、OCR、人工 Canonical Merge、保存回答、固定间隔复习、项目与资料，以及用户主动触发的 AI 辅助。Phase 1B 不包含 VLM/LLM 自动提题或分类、自动语义归并、SavedAnswer、Project/Resume/Material、LLM 参考答案、模拟面试、语音/视频、多 Agent 或社交平台自动采集。
 
 
 ## 相似题审核与规范题归并（Phase 1C）
@@ -201,4 +228,4 @@ npm --prefix frontend run build
 - 搜索子题原文只显示规范题，分类按规范题最终选择筛选；新练习只选规范题，旧练习可以继续完成。
 - 「合并 OCR 候选区域」用于整理同一截图的候选边界，与跨题目的「归并为规范题」不同。
 
-可选 LLM/VLM 建议、自动归并和多用户功能尚未实现。
+OCR 采集的可选 LLM/VLM 建议、自动归并和多用户功能尚未实现。

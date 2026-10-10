@@ -71,7 +71,7 @@ onBeforeUnmount(() => { alive = false; revision++; });
     <p v-if="error" role="alert" class="error-banner">{{ error }} <button v-if="!busy" @click="load">重新加载</button></p><p v-if="success" role="status" class="success-banner">{{ success }}</p>
     <SavedAnswerEditor v-if="creating" :busy="busy" @save="mutate(()=>createSavedAnswer(questionId,{content:$event}),'回答已保存。',true)" @cancel="creating=false" />
     <p v-if="loading && !answers.length" role="status">正在加载回答…</p><p v-else-if="!answers.length && !error && !creating" class="answer-empty">还没有保存回答。留下简短要点或完整表达，逐次完善自己的答案。</p>
-    <SavedAnswerCard v-for="answer in answers" :key="`${questionId}:${answer.id}`" :answer="answer" :busy="busy" :read-only="readOnly" @edit="(id,content)=>mutate(()=>appendAnswerVersion(id,content),'新版本已保存，旧版本继续保留。')" @rate="(id,rating)=>mutate(()=>rateAnswer(id,rating),'答案质量评分已更新。')" @pin="(id,pinned)=>mutate(()=>pinAnswer(id,pinned),pinned?'已设为首选；本归并组的其他回答已取消置顶。':'已取消置顶。')" @archive="id=>mutate(()=>archiveAnswer(id),'回答已归档，版本历史仍保留。')" />
+    <SavedAnswerCard v-for="answer in answers" :key="`${questionId}:${answer.id}`" :answer="answer" :busy="busy" :read-only="readOnly" @ai-saved="()=>{void load();emit('changed');}" @edit="(id,content)=>mutate(()=>appendAnswerVersion(id,content),'新版本已保存，旧版本继续保留。')" @rate="(id,rating)=>mutate(()=>rateAnswer(id,rating),'答案质量评分已更新。')" @pin="(id,pinned)=>mutate(()=>pinAnswer(id,pinned),pinned?'已设为首选；本归并组的其他回答已取消置顶。':'已取消置顶。')" @archive="id=>mutate(()=>archiveAnswer(id),'回答已归档，版本历史仍保留。')" />
   </section>
 </template>
 <style scoped>

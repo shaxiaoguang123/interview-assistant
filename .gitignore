@@ -37,3 +37,6 @@ uploads/
 
 # Phase 3 isolated browser evidence and synthetic database
 .superpowers/sdd/phase-3-practice-review/
+
+# Phase 4 synthetic browser evidence and isolated material storage
+.superpowers/sdd/phase-4-project-material-llm/

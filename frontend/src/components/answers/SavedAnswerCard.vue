@@ -1,9 +1,12 @@
 <script setup lang="ts">
 import { onBeforeUnmount, ref, watch } from 'vue';
 import { getAnswerVersions, type SavedAnswer, type AnswerVersion } from '../../api/saved-answers';
+import AssistantPanel from "../assistant/AssistantPanel.vue";
+import type { SaveAssistantResult } from "../../api/assistant";
 import SavedAnswerEditor from './SavedAnswerEditor.vue';
 const props = defineProps<{answer:SavedAnswer;busy:boolean;readOnly:boolean}>();
-const emit = defineEmits<{edit:[id:number,content:string];rate:[id:number,rating:number|null];pin:[id:number,pinned:boolean];archive:[id:number]}>();
+const emit = defineEmits<{edit:[id:number,content:string];rate:[id:number,rating:number|null];pin:[id:number,pinned:boolean];archive:[id:number];aiSaved:[result:SaveAssistantResult]}>();
+const aiOpen=ref(false);
 const editing=ref(false), historyOpen=ref(false), historyLoading=ref(false), historyError=ref(''), confirmArchive=ref(false);
 const versions=ref<AnswerVersion[]>([]), selectedVersion=ref<number|null>(null);
 let revision=0;
@@ -23,15 +26,17 @@ onBeforeUnmount(()=>revision++);
 <template>
   <article class="saved-answer" :class="{pinned:answer.is_pinned, archived:answer.archived_at}" :aria-label="`保存回答 ${answer.id}`" :aria-busy="busy">
     <header class="answer-heading"><div class="answer-meta"><strong>回答 #{{ answer.id }}</strong><span v-if="answer.is_pinned" class="badge accent">置顶 · 首选</span><span v-if="answer.archived_at" class="badge">已归档</span><span class="muted">当前 v{{ answer.current_version.version_no }}</span><span class="muted">原题 #{{ answer.question_id }}</span></div><time class="muted">{{ date(answer.updated_at) }}</time></header>
+    <button v-if="!readOnly && !answer.archived_at" type="button" :disabled="busy" @click="aiOpen=!aiOpen">{{ aiOpen?'收起 AI 辅助':'AI 润色 / 分析此回答' }}</button>
+    <AssistantPanel v-if="aiOpen" :key="answer.current_version.id" :question-id="answer.question_id" :source-version-id="answer.current_version.id" :answer-id="answer.id" initial-open :disabled="busy" @saved="emit('aiSaved',$event)" @cancel="aiOpen=false" />
     <SavedAnswerEditor v-if="editing" :initial="answer.current_version.content" :busy="busy" editing @save="emit('edit',answer.id,$event)" @cancel="editing=false" />
     <p v-else class="answer-content">{{ answer.current_version.content }}</p>
-    <div class="answer-origin helper"><span>手写回答</span><span v-if="answer.current_version.source_session_item_id">练习项 #{{ answer.current_version.source_session_item_id }} · 自评事件 #{{ answer.current_version.source_practice_review_id }}</span><span v-else>当前版本来自题目详情</span><span v-if="answer.source_session_item_id && !answer.current_version.source_session_item_id">首次保存于练习项 #{{ answer.source_session_item_id }}</span></div>
+    <div class="answer-origin helper"><span>{{ {user_written:"手写回答",ai_assisted:"AI 辅助回答",ai_generated:"AI 生成回答"}[answer.current_version.origin_kind as "user_written"|"ai_assisted"|"ai_generated"] }}</span><span v-if="answer.current_version.based_on_version_id">基于版本 #{{ answer.current_version.based_on_version_id }}</span><span v-if="answer.current_version.assistant_output_id">AI 输出 #{{ answer.current_version.assistant_output_id }}</span><span v-if="answer.current_version.source_session_item_id">练习项 #{{ answer.current_version.source_session_item_id }} · 自评事件 #{{ answer.current_version.source_practice_review_id }}</span><span v-else>当前版本来自题目详情</span><span v-if="answer.source_session_item_id && !answer.current_version.source_session_item_id">首次保存于练习项 #{{ answer.source_session_item_id }}</span></div>
     <div class="answer-controls">
       <label class="quality-rating">答案质量<select :value="answer.current_version.self_rating??''" :aria-label="`回答 ${answer.id} 质量评分`" :disabled="busy || readOnly || !!answer.archived_at" @change="ratingChanged"><option value="">未评分</option><option v-for="n in 5" :key="n" :value="n">{{ n }} 分</option></select></label>
       <div class="action-row"><template v-if="!readOnly && !answer.archived_at"><button :disabled="busy" @click="editing=!editing">{{ editing?'收起编辑':'编辑回答' }}</button><button :disabled="busy" :aria-pressed="answer.is_pinned" @click="emit('pin',answer.id,!answer.is_pinned)">{{ answer.is_pinned?'取消置顶':'设为首选' }}</button></template><button :disabled="busy" :aria-expanded="historyOpen" @click="toggleHistory">版本历史 · {{ answer.version_count }}</button><button v-if="!readOnly && !answer.archived_at" :disabled="busy" class="quiet danger" @click="confirmArchive=true">归档</button></div>
     </div>
     <div v-if="confirmArchive" class="archive-confirm"><span>归档后隐藏在默认列表中，历史版本会保留。</span><button :disabled="busy" @click="emit('archive',answer.id);confirmArchive=false">确认归档</button><button @click="confirmArchive=false">取消</button></div>
-    <section v-if="historyOpen" class="answer-versions" aria-label="回答版本历史"><p v-if="historyLoading" role="status">正在加载版本…</p><div v-else-if="historyError"><p role="alert">{{ historyError }}</p><button @click="loadVersions()">重试版本历史</button></div><template v-else><label>查看版本<select v-model="selectedVersion" :aria-label="`回答 ${answer.id} 历史版本`"><option v-for="v in versions" :key="v.id" :value="v.id">v{{ v.version_no }} · {{ v.self_rating?`${v.self_rating} 分`:'未评分' }} · {{ date(v.created_at) }}</option></select></label><template v-for="v in versions" :key="v.id"><div v-if="selectedVersion===v.id"><p class="helper">只读版本 v{{ v.version_no }} · {{ v.source_session_item_id?`练习项 #${v.source_session_item_id} / 自评 #${v.source_practice_review_id}`:'题目详情保存' }}</p><p class="answer-content">{{ v.content }}</p></div></template></template></section>
+    <section v-if="historyOpen" class="answer-versions" aria-label="回答版本历史"><p v-if="historyLoading" role="status">正在加载版本…</p><div v-else-if="historyError"><p role="alert">{{ historyError }}</p><button @click="loadVersions()">重试版本历史</button></div><template v-else><label>查看版本<select v-model="selectedVersion" :aria-label="`回答 ${answer.id} 历史版本`"><option v-for="v in versions" :key="v.id" :value="v.id">v{{ v.version_no }} · {{ v.self_rating?`${v.self_rating} 分`:'未评分' }} · {{ date(v.created_at) }}</option></select></label><template v-for="v in versions" :key="v.id"><div v-if="selectedVersion===v.id"><p class="helper">只读版本 v{{ v.version_no }} · {{ {user_written:"手写",ai_assisted:"AI 辅助",ai_generated:"AI 生成"}[v.origin_kind as "user_written"|"ai_assisted"|"ai_generated"] }} · {{ v.source_session_item_id?`练习项 #${v.source_session_item_id} / 自评 #${v.source_practice_review_id}`:'题目详情保存' }}</p><p class="answer-content">{{ v.content }}</p></div></template></template></section>
   </article>
 </template>
 <style scoped>

@@ -6,6 +6,10 @@ import QuestionDetailPage from "../pages/QuestionDetailPage.vue";
 import PracticeSetupPage from "../pages/PracticeSetupPage.vue";
 import PracticeSessionPage from "../pages/PracticeSessionPage.vue";
 import ProgressPage from "../pages/ProgressPage.vue";
+import ProjectsPage from "../pages/ProjectsPage.vue";
+import ProjectDetailPage from "../pages/ProjectDetailPage.vue";
+import MaterialsPage from "../pages/MaterialsPage.vue";
+import SettingsPage from "../pages/SettingsPage.vue";
 import InboxPage from "../pages/InboxPage.vue";
 
 const HomePlaceholder = defineComponent({
@@ -23,6 +27,10 @@ export function createAppRouter(history: RouterHistory = createWebHistory()) {
       { path: "/questions/:id", name: "question-detail", component: QuestionDetailPage },
       { path: "/taxonomy", name: "taxonomy", component: TaxonomyPage },
       { path: "/inbox", name: "inbox", component: InboxPage },
+      { path: "/projects", name: "projects", component: ProjectsPage },
+      { path: "/projects/:id", name: "project-detail", component: ProjectDetailPage },
+      { path: "/materials", name: "materials", component: MaterialsPage },
+      { path: "/settings", name: "settings", component: SettingsPage },
       { path: "/progress", name: "progress", component: ProgressPage },
       { path: "/practice", name: "practice-setup", component: PracticeSetupPage },
       { path: "/practice/sessions/:id", name: "practice-session", component: PracticeSessionPage },
