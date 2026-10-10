@@ -170,7 +170,8 @@ onBeforeUnmount(() => resizeObserver?.disconnect());
       class="image-stage"
       :style="{
         width: containerWidth ? String(containerWidth) + 'px' : '100%',
-        height: containerHeight ? String(containerHeight) + 'px' : 'min(70vh, 720px)',
+        height: containerHeight ? String(containerHeight) + 'px' : 'auto',
+        aspectRatio: !containerHeight && naturalWidth && naturalHeight ? naturalWidth + ' / ' + naturalHeight : undefined,
       }"
     >
       <img

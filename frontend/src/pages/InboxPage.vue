@@ -572,12 +572,16 @@ async function retrySource(sourceId: number) {
   }
 }
 
+function stateLabel(value: string) {
+  return ({pending_review:"待审核",confirmed:"已确认",rejected:"已拒绝",superseded:"已替换",succeeded:"识别成功",failed:"识别失败",queued:"等待识别",running:"识别中"} as Record<string,string>)[value] ?? value;
+}
 onMounted(loadSources);
 </script>
 
 <template>
-  <section aria-label="截图采集收件箱">
-    <h2>截图采集</h2>
+  <section aria-label="截图采集收件箱" class="inbox-page">
+    <header class="page-heading"><div><span class="eyebrow">Capture & review</span><h2>截图采集</h2><p>从截图到题库，每一道题都经过你的审核。</p></div></header>
+    <div class="inbox-workspace"><aside class="inbox-library">
     <SourceUpload :disabled="busy" @upload="uploadFiles" />
     <p v-if="busy" role="status">正在处理截图…</p>
     <p v-if="loadError" role="alert">{{ loadError }}</p>
@@ -587,7 +591,7 @@ onMounted(loadSources);
       <ul>
         <li v-for="(result, index) in uploadResults" :key="index">
           <span v-if="result.status === 'stored'">
-            {{ result.source?.original_filename }} · {{ result.job?.status }}
+            {{ result.source?.original_filename }} · {{ result.job ? stateLabel(result.job.status) : "" }}
           </span>
           <span v-else>
             {{ result.filename ?? "截图 " + (index + 1) }} ·
@@ -599,19 +603,20 @@ onMounted(loadSources);
 
     <section aria-label="截图与导入历史">
       <h3>截图历史</h3>
-      <p v-if="sources.length === 0">还没有截图</p>
+      <p v-if="sources.length === 0" class="empty-state">还没有截图</p>
       <article v-for="asset in sources" :key="asset.id" class="source-entry">
         <h4>{{ asset.title || asset.original_filename || "截图 " + asset.id }}</h4>
-        <p>{{ asset.display_width }} × {{ asset.display_height }} · {{ asset.sha256 }}</p>
+        <p class="muted">{{ asset.display_width }} × {{ asset.display_height }} · {{ asset.ingestion_jobs.length }} 次导入</p><details><summary>来源校验信息</summary><p class="mono">{{ asset.sha256 }}</p></details>
         <a :href="'/api/v1/sources/' + asset.id + '/original'">打开原图</a>
         <ul aria-label="OCR 任务历史">
           <li v-for="job in asset.ingestion_jobs" :key="job.id">
             <button
               type="button"
               :aria-label="'打开导入任务 ' + job.id"
+              :aria-pressed="job.id === selectedJobId"
               @click="openHistoricalJob(job.id)"
             >
-              任务 {{ job.id }} · {{ job.status }} · {{ job.stage }} · 自动候选 {{ job.candidate_count }}
+              任务 {{ job.id }} · {{ stateLabel(job.status) }} · 自动候选 {{ job.candidate_count }}
             </button>
             <button
               v-if="job.status === 'queued' || job.status === 'running'"
@@ -637,13 +642,14 @@ onMounted(loadSources);
       </article>
     </section>
 
+    </aside><div>
     <p v-if="historyError" role="alert">{{ historyError }}</p>
-    <section v-if="selectedJob" aria-label="导入任务详情">
-      <h3>任务 {{ selectedJob.id }} · {{ selectedJob.status }}</h3>
+    <section v-if="selectedJob" aria-label="导入任务详情" class="job-workspace">
+      <h3>任务 {{ selectedJob.id }} · {{ stateLabel(selectedJob.status) }}</h3>
       <p v-if="selectedJob.failure_stage">失败阶段：{{ selectedJob.failure_stage }}</p>
-      <pre v-if="ocrBlocks.length" aria-label="OCR 原文">{{
+      <details v-if="ocrBlocks.length"><summary>查看完整 OCR 原文（{{ ocrBlocks.length }} 个区域）</summary><pre aria-label="OCR 原文">{{
         ocrBlocks.map((block) => block.text).join("\n")
-      }}</pre>
+      }}</pre></details>
       <p v-else>没有识别到文字</p>
       <section
         v-if="selectedJob.status === 'succeeded' && selectedJob.stage === 'completed' && ocrBlocks.length"
@@ -694,7 +700,7 @@ onMounted(loadSources);
           </button>
         </form>
       </section>
-      <ul aria-label="候选题历史">
+      <ul aria-label="候选题历史" class="candidate-list">
         <li v-for="candidate in candidates" :key="candidate.id">
           <input
             v-if="candidate.candidate_state === 'pending_review' && !candidate.archived_at"
@@ -709,7 +715,7 @@ onMounted(loadSources);
             :aria-pressed="candidate.id === selectedCandidateId"
             @click="selectCandidate(candidate)"
           >
-            {{ candidate.text }} · {{ candidate.candidate_state }}
+            {{ candidate.text }} · {{ stateLabel(candidate.candidate_state) }}
           </button>
           <span> 来源区域 {{ candidate.sources.map((item) => item.question_source_id).join(", ") }} </span>
           <span v-if="candidate.split_from_candidate_id">拆分自候选 #{{ candidate.split_from_candidate_id }}</span>
@@ -727,8 +733,8 @@ onMounted(loadSources);
       <p v-if="selectedCandidate && selectedCandidate.candidate_state !== 'pending_review'">
         此候选已完成审核，只能查看历史来源证据。
       </p>
+      <details class="candidate-extras" v-if="selectedCandidate && selectedCandidate.candidate_state === 'pending_review' && !selectedCandidate.archived_at"><summary>整理同一截图的候选边界</summary>
       <form
-        v-if="selectedCandidate && selectedCandidate.candidate_state === 'pending_review' && !selectedCandidate.archived_at"
         aria-label="候选题同任务合并"
         @submit.prevent="mergeCandidates"
       >
@@ -737,7 +743,7 @@ onMounted(loadSources);
           <textarea v-model="mergeFinalText" aria-label="合并后题目正文" />
         </label>
         <button type="submit" :disabled="candidateBusy">合并所选候选题</button>
-      </form>
+      </form></details>
       <QuestionRelationReview
         v-if="selectedCandidate && selectedCandidate.candidate_state === 'pending_review' && !selectedCandidate.archived_at && selectedCandidate.status === 'pending_review'"
         :key="`${selectedCandidate.id}:${relationContextKey}`"
@@ -747,7 +753,7 @@ onMounted(loadSources);
         :disabled="candidateBusy"
         @state="setRelationReviewState"
       />
-      <IngestionCandidateEditor
+      <div class="candidate-review-workspace"><IngestionCandidateEditor
         v-if="
           selectedCandidate &&
           selectedCandidate.candidate_state === 'pending_review' &&
@@ -781,8 +787,10 @@ onMounted(loadSources);
         :image-width="selectedSourceAsset?.display_width ?? 0"
         :image-height="selectedSourceAsset?.display_height ?? 0"
         @select-source="selectedSourceId = $event"
-      />
+      /></div>
     </section>
+    <div v-else class="empty-state">选择左侧导入任务，开始校对题目与来源。</div>
+    </div></div>
   </section>
 </template>
 

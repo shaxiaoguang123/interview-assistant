@@ -93,4 +93,10 @@ describe('canonical detail history',()=>{
     expect(wrapper.find('button[aria-label="取消收藏"]').exists()).toBe(false);
     expect(wrapper.find('a[href="/questions/1"]').exists()).toBe(true);
   });
+  it('does not offer ordinary root archival for a canonical group with children',async()=>{
+    const {wrapper}=await setup();
+    const archive=wrapper.findAll('button').find(b=>b.text()==='归档');
+    expect(archive?.attributes('disabled')).toBeDefined();
+    expect(wrapper.text()).toContain('归并组暂不支持整组归档');
+  });
 });

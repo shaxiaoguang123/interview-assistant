@@ -62,12 +62,12 @@ function save(): void {
 </script>
 
 <template>
-  <form aria-label="题目表单" @submit.prevent="save">
+  <form class="question-form" aria-label="题目表单" @submit.prevent="save">
     <label>
       题目正文
       <textarea v-model="text" aria-label="题目正文" required />
     </label>
-    <label>
+    <div class="form-fields"><label>
       题型
       <input v-model="answerType" aria-label="题型" />
     </label>
@@ -81,8 +81,9 @@ function save(): void {
       </select>
     </label>
 
-    <fieldset>
+    </div><fieldset>
       <legend>Topic</legend>
+      <div class="classification-choices">
       <label v-for="topic in topics" :key="topic.id">
         <input
           v-model="topicIds"
@@ -92,10 +93,12 @@ function save(): void {
         />
         {{ topic.name }}<template v-if="!topic.is_active">（停用，先移除或替换）</template>
       </label>
+      </div>
     </fieldset>
 
     <fieldset>
       <legend>Tag</legend>
+      <div class="classification-choices">
       <label v-for="tag in tags" :key="tag.id">
         <input
           v-model="tagIds"
@@ -105,6 +108,7 @@ function save(): void {
         />
         {{ tag.name }}<template v-if="!tag.is_active">（停用，先移除或替换）</template>
       </label>
+      </div>
     </fieldset>
 
     <button type="submit" :disabled="saving">{{ saving ? "保存中…" : "保存题目" }}</button>

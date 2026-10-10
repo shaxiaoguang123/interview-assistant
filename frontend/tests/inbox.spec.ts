@@ -192,9 +192,9 @@ describe("screenshot inbox and OCR viewer", () => {
 
     expect(runIds).toEqual([11, 22]);
     expect(wrapper.text()).toContain("OCR_FAILED");
-    expect(wrapper.text()).toContain("succeeded");
+    expect(wrapper.text()).toContain("识别成功");
     expect(wrapper.text()).toContain("screenshot-1.png");
-    expect(wrapper.get("[aria-label='本次上传结果']").text()).toContain("succeeded");
+    expect(wrapper.get("[aria-label='本次上传结果']").text()).toContain("识别成功");
   });
 
   it("queries a timed-out job without posting run a second time", async () => {
@@ -272,7 +272,7 @@ describe("screenshot inbox and OCR viewer", () => {
     expect(requests.indexOf("/api/v1/ingestions/11")).toBeLessThan(
       requests.indexOf("/api/v1/ingestions/11/run"),
     );
-    expect(wrapper.text()).toContain("任务 11 · succeeded");
+    expect(wrapper.text()).toContain("任务 11 · 识别成功");
   });
 
   it("ignores a late historical job response after another job is selected", async () => {
@@ -438,10 +438,10 @@ describe("screenshot inbox and OCR viewer", () => {
     await wrapper.get("[aria-label='打开导入任务 11']").trigger("click");
     await flushPromises();
 
-    expect(wrapper.text()).toContain("pending_review");
-    expect(wrapper.text()).toContain("confirmed");
-    expect(wrapper.text()).toContain("rejected");
-    expect(wrapper.text()).toContain("superseded");
+    expect(wrapper.text()).toContain("待审核");
+    expect(wrapper.text()).toContain("已确认");
+    expect(wrapper.text()).toContain("已拒绝");
+    expect(wrapper.text()).toContain("已替换");
     expect(wrapper.find("[aria-label='OCR 原文']").exists()).toBe(true);
   });
 

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { onBeforeUnmount, ref, watch } from "vue";
+import { RouterLink } from "vue-router";
 import { ApiError } from "../api/client";
 import {
   getSimilarCandidates, reviewRelation,
@@ -97,31 +98,31 @@ onBeforeUnmount(() => { alive = false; requestRevision += 1; });
 </script>
 
 <template>
-  <section aria-label="相似题审核">
+  <section aria-label="相似题审核" class="relation-panel">
     <h3>相似题审核</h3>
     <p v-if="loading" role="status">正在加载相似题…</p>
     <p v-if="errorMessage" role="alert">相似题加载或审核失败：{{ errorMessage }}</p>
-    <button type="button" aria-label="重新加载相似题" :disabled="loading || reviewing || disabled" @click="load()">重新加载相似题</button>
-    <button type="button" aria-label="重新扫描相似题" :disabled="loading || reviewing || disabled" @click="load(true)">重新扫描相似题</button>
+    <div class="action-row"><button type="button" aria-label="重新加载相似题" :disabled="loading || reviewing || disabled" @click="load()">重新加载相似题</button>
+    <button type="button" aria-label="重新扫描相似题" :disabled="loading || reviewing || disabled" @click="load(true)">重新扫描相似题</button></div>
     <template v-if="data && !loading">
       <p>关系 {{ data.total_count }} · 待处理 {{ data.unresolved_count }}</p>
       <p v-if="data.total_count > data.candidates.length">最多显示 20 条，优先展示待处理关系；处理后继续显示其余关系。</p>
       <p v-if="data.scan_required" role="alert">正文或题目状态已变化，请重新扫描与审核。</p>
-      <p v-if="data.unresolved_count > 0">
+      <p v-if="data.unresolved_count > 0" class="relation-hint">
         同题需等待后续规范题归并功能。可暂不处理；确定为误报时可排除，或明确标记为相关题、不同题。
       </p>
       <p v-if="!data.candidates.length && !data.scan_required && !errorMessage">暂无相似题建议</p>
       <p v-if="deferredMessage" role="status">{{ deferredMessage }}</p>
-      <ul v-if="data.candidates.length" aria-label="相似关系列表">
-        <li v-for="relation in data.candidates" :key="relation.id" :data-relation-id="relation.id">
-          <p>{{ relation.match_kind === "exact" ? "完全重复（规范化文本）" : "近似建议" }} · 相似度 {{ relation.confidence?.toFixed(3) ?? "未知" }}</p>
-          <p>{{ relation.other_question.text }} · #{{ relation.other_question.id }}</p>
-          <a v-if="relation.other_question.canonical_question_id" :href="`/questions/${relation.other_question.canonical_question_id}`">查看题目</a>
+      <ul v-if="data.candidates.length" aria-label="相似关系列表" class="relation-list">
+        <li v-for="relation in data.candidates" :key="relation.id" :data-relation-id="relation.id" class="relation-row">
+          <p class="badge accent">{{ relation.match_kind === "exact" ? "完全重复（规范化文本）" : "近似建议" }} · 相似度 {{ relation.confidence?.toFixed(3) ?? "未知" }}</p>
+          <p class="relation-question">{{ relation.other_question.text }} · #{{ relation.other_question.id }}</p>
+          <RouterLink v-if="relation.other_question.canonical_question_id" :to="`/questions/${relation.other_question.canonical_question_id}`">查看题目</RouterLink>
           <p>{{ decisionLabel(relation) }}</p>
-          <button type="button" :aria-label="`排除误报关系 ${relation.id}`" :disabled="loading || reviewing || disabled || !!errorMessage || data.scan_required" @click="decide(relation, 'same_question', 'rejected')">排除误报</button>
+          <div class="relation-actions"><button type="button" :aria-label="`排除误报关系 ${relation.id}`" :disabled="loading || reviewing || disabled || !!errorMessage || data.scan_required" @click="decide(relation, 'same_question', 'rejected')">排除误报</button>
           <button type="button" :aria-label="`标记为相关题关系 ${relation.id}`" :disabled="loading || reviewing || disabled || !!errorMessage || data.scan_required" @click="decide(relation, 'related_question', 'accepted')">标记为相关题</button>
           <button type="button" :aria-label="`标记为不同题关系 ${relation.id}`" :disabled="loading || reviewing || disabled || !!errorMessage || data.scan_required" @click="decide(relation, 'different_question', 'accepted')">标记为不同题</button>
-          <button type="button" :aria-label="`暂不处理关系 ${relation.id}`" :disabled="loading || reviewing || disabled" @click="deferredMessage = '保留建议，待规范题归并功能完成后处理。'">暂不处理</button>
+          <button type="button" :aria-label="`暂不处理关系 ${relation.id}`" :disabled="loading || reviewing || disabled" @click="deferredMessage = '保留建议，待规范题归并功能完成后处理。'">暂不处理</button></div>
         </li>
       </ul>
     </template>

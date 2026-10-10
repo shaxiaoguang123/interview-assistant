@@ -69,10 +69,10 @@ onMounted(loadTaxonomy);
 </script>
 
 <template>
-  <section aria-labelledby="practice-setup-title">
-    <h2 id="practice-setup-title">开始练习</h2>
+  <section aria-labelledby="practice-setup-title" class="practice-setup">
+    <header class="page-heading"><div><span class="eyebrow">Deliberate practice</span><h2 id="practice-setup-title">开始练习</h2><p>从规范题库选择一组问题，专注组织答案与技术表达。</p></div></header>
     <p v-if="errorMessage" role="alert">{{ errorMessage }}</p>
-    <form aria-label="练习设置" @submit.prevent="startPractice">
+    <form class="panel" aria-label="练习设置" @submit.prevent="startPractice">
       <label>
         练习模式
         <select v-model="mode" aria-label="练习模式">

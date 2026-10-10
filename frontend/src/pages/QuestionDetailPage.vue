@@ -248,7 +248,7 @@ watch(questionId, () => void loadQuestion(), { immediate: true });
 </script>
 
 <template>
-  <section aria-labelledby="question-detail-title">
+  <section aria-labelledby="question-detail-title" class="question-detail">
     <p v-if="loading">正在加载题目…</p>
     <template v-if="errorMessage">
       <p role="alert">{{ errorMessage }}</p>
@@ -262,9 +262,9 @@ watch(questionId, () => void loadQuestion(), { immediate: true });
       </button>
     </template>
     <template v-if="!loading && question">
-      <h2 id="question-detail-title">题目详情</h2>
+      <header class="page-heading"><div><span class="eyebrow">Question workspace · #{{ question.id }}</span><h2 id="question-detail-title">题目详情</h2></div><RouterLink to="/">返回题库</RouterLink></header>
       <p v-if="question.archived_at">已归档</p>
-      <p v-else>状态：{{ question.status }}</p>
+      <p v-else class="badge">{{ readOnly ? "归并历史" : "正式题目" }}</p>
       <p class="question-reading" aria-label="当前题目正文">{{ question.text }}</p>
       <p v-if="readOnly" role="status">此题已归并，原始内容只读。<RouterLink :to="`/questions/${question.canonical_question_id}`">打开规范题 #{{ question.canonical_question_id }}</RouterLink></p>
       <p v-else class="group-scope">取消收藏和取消错题标记作用于整个归并组。</p>
@@ -275,8 +275,10 @@ watch(questionId, () => void loadQuestion(), { immediate: true });
       <button v-if="!readOnly" type="button" :aria-label="question.state.is_wrong ? '取消错题标记' : '标记错题'" @click="patchState('is_wrong')">
         {{ question.state.is_wrong ? "取消错题标记" : "标记错题" }}
       </button>
-      <button v-if="!readOnly && !question.archived_at" type="button" @click="archiveQuestion">归档</button>
-      <QuestionForm v-if="!readOnly"
+      <button v-if="!readOnly && !question.archived_at" type="button" :disabled="historyLoading || !!historyLoadError || (history?.member_question_ids.length ?? 0) > 1" @click="archiveQuestion">归档</button>
+      <p v-if="history && history.member_question_ids.length > 1" class="helper">归并组暂不支持整组归档，原始题目与历史继续保留。</p>
+      <details v-if="!readOnly" class="editor-panel"><summary>编辑题目与分类</summary>
+      <QuestionForm
         :initial-text="question.text"
         :initial-answer-type="question.answer_type"
         :initial-difficulty="question.difficulty"
@@ -285,7 +287,7 @@ watch(questionId, () => void loadQuestion(), { immediate: true });
         :topics="topics"
         :tags="tags"
         @save="update"
-      />
+      /></details>
       <QuestionRelationReview
         v-if="question.status === 'active' && !question.archived_at"
         :key="question.id"

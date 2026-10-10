@@ -206,7 +206,7 @@ describe("Inbox relation review integration", () => {
       }
       return undefined;
     }));
-    const wrapper = mount(InboxPage);
+    const wrapper = mount(InboxPage, {global:{stubs:{RouterLink:true}}});
     await flushPromises();
     await wrapper.get("button[aria-label='打开导入任务 11']").trigger("click");
     await flushPromises();
@@ -224,7 +224,7 @@ describe("Inbox relation review integration", () => {
     let failed = true;
     vi.stubGlobal("fetch", inboxFetch((path) => path.includes("/similar-candidates") ?
       failed ? json({ error: { code: "INTERNAL_ERROR", message: "review unavailable" } }, 500) : json(result(101, [])) : undefined));
-    const wrapper = mount(InboxPage);
+    const wrapper = mount(InboxPage, {global:{stubs:{RouterLink:true}}});
     await flushPromises();
     await wrapper.get("button[aria-label='打开导入任务 11']").trigger("click");
     await flushPromises();
@@ -243,7 +243,7 @@ describe("Inbox relation review integration", () => {
       if (path === "/api/v1/questions/101/similar-candidates") return json(result(101));
       return undefined;
     }));
-    const wrapper = mount(InboxPage);
+    const wrapper = mount(InboxPage, {global:{stubs:{RouterLink:true}}});
     await flushPromises();
     await wrapper.get("button[aria-label='打开导入任务 11']").trigger("click");
     await flushPromises();
@@ -265,7 +265,7 @@ describe("Inbox relation review integration", () => {
       if (path === "/api/v1/questions/101/similar-candidates") return json(result(101, edited ? [relation()] : [relation(1, 9, "exact", "rejected")]));
       return undefined;
     }));
-    const wrapper = mount(InboxPage);
+    const wrapper = mount(InboxPage, {global:{stubs:{RouterLink:true}}});
     await flushPromises();
     await wrapper.get("button[aria-label='打开导入任务 11']").trigger("click");
     await flushPromises();

@@ -207,7 +207,8 @@ function split() {
 </script>
 
 <template>
-  <section aria-label="候选题编辑">
+  <section aria-label="候选题编辑" class="candidate-editor">
+    <h3>校对候选题</h3>
     <form aria-label="候选题正文与分类" @submit.prevent="save">
       <label>
         候选题正文
@@ -315,7 +316,9 @@ function split() {
     >
       拒绝候选题
     </button>
+    <p v-if="confirmationBlocked" class="confirmation-hint" aria-label="确认受限原因">请先完成相似题审核；加载失败或未处理的同题建议会阻止独立确认。可排除误报、明确分类，或暂留待处理。</p>
     <button
+      class="primary"
       type="button"
       aria-label="确认进入题库"
       :disabled="busy || confirmationBlocked"
