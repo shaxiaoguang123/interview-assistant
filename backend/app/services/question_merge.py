@@ -14,6 +14,7 @@ from app.errors import ApiError
 from app.models.ingestion import IngestionJob, OCRBlock, QuestionSource, QuestionSourceOCRBlock
 from app.models.question import Question, QuestionRelation, QuestionTag, QuestionTopic
 from app.models.taxonomy import Tag, Topic, utc_now
+from app.models.saved_answer import SavedAnswer, SavedAnswerVersion
 from app.repositories import questions as question_repository
 from app.services.ingestion_candidates import _advance_candidate, _get_candidate_sources
 from app.services.question_relations import _begin_write
@@ -45,7 +46,7 @@ def _ids(value: object, field: str) -> list[int]:
 
 def _validate_payload(canonical_id: int, payload: object) -> dict:
     required = {'canonical_id', 'source_question_id', 'relation_id', 'preview_token', 'topic_ids', 'tag_ids'}
-    if not isinstance(payload, dict) or not required <= set(payload) or set(payload) - required - {'expected_candidate_revision'}:
+    if not isinstance(payload, dict) or not required <= set(payload) or set(payload) - required - {'expected_candidate_revision', 'pinned_answer_id'}:
         raise ApiError(400, 'VALIDATION_ERROR', 'Expected canonical_id, source_question_id, relation_id, preview_token, topic_ids and tag_ids')
     for field in ('canonical_id', 'source_question_id', 'relation_id'):
         if type(payload[field]) is not int or payload[field] <= 0:
@@ -59,6 +60,8 @@ def _validate_payload(canonical_id: int, payload: object) -> dict:
         revision = payload['expected_candidate_revision']
         if type(revision) is not int or revision < 0:
             raise ApiError(400, 'VALIDATION_ERROR', 'expected_candidate_revision must be a non-negative integer')
+    if 'pinned_answer_id' in payload and (type(payload['pinned_answer_id']) is not int or payload['pinned_answer_id'] <= 0):
+        raise ApiError(400, 'VALIDATION_ERROR', 'pinned_answer_id must be a positive integer')
     return {**payload, 'topic_ids': _ids(payload['topic_ids'], 'topic_ids'), 'tag_ids': _ids(payload['tag_ids'], 'tag_ids')}
 
 
@@ -152,6 +155,15 @@ def _collect(session: Session, canonical_id: int, source_id: int, relation_id: i
         } if relation else None,
         'candidate_provenance': _candidate_state(session, source),
     }
+    pinned = list(session.scalars(select(SavedAnswer).where(
+        SavedAnswer.question_id.in_([q['id'] for q in all_members]),
+        SavedAnswer.is_pinned.is_(True), SavedAnswer.archived_at.is_(None)).order_by(SavedAnswer.id)))
+    state['pinned_answers'] = []
+    for answer in pinned:
+        version = session.scalar(select(SavedAnswerVersion).where(SavedAnswerVersion.saved_answer_id == answer.id)
+                                 .order_by(SavedAnswerVersion.version_no.desc()).limit(1))
+        state['pinned_answers'].append({'id': answer.id, 'question_id': answer.question_id,
+            'content': version.content, 'version_no': version.version_no, 'updated_at': _utc(answer.updated_at)})
     return state, target, source, relation, source_group
 
 
@@ -227,6 +239,17 @@ def merge_question(session: Session, canonical_id: int, payload: object) -> Ques
                 raise ApiError(400, 'VALIDATION_ERROR', 'expected_candidate_revision only applies to a pending OCR candidate')
             _validate_selection(session, Topic, data['topic_ids'], state['topic_union'], 'topic_ids')
             _validate_selection(session, Tag, data['tag_ids'], state['tag_union'], 'tag_ids')
+            pinned_ids = {a['id'] for a in state['pinned_answers']}
+            selected_pin = data.get('pinned_answer_id')
+            if len(pinned_ids) > 1 and selected_pin is None:
+                raise ApiError(400, 'VALIDATION_ERROR', 'Select one pinned answer to keep before merging')
+            if selected_pin is not None and selected_pin not in pinned_ids:
+                raise ApiError(400, 'VALIDATION_ERROR', 'Selected pinned answer is not in this preview')
+            if selected_pin is not None:
+                for answer in session.scalars(select(SavedAnswer).where(SavedAnswer.id.in_(pinned_ids - {selected_pin}))):
+                    answer.is_pinned = False
+                    answer.updated_at = utc_now()
+                session.flush()
             question_repository.replace_question_topics(session, target.id, data['topic_ids'])
             question_repository.replace_question_tags(session, target.id, data['tag_ids'])
             session.flush()

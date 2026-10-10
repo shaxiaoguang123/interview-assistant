@@ -32,3 +32,5 @@ uploads/
 # User-provided and temporary screenshot sets
 /pic-test/
 /tmp-screenshots/
+# Phase 2 synthetic browser data, screenshots and local logs
+.superpowers/sdd/phase-2-saved-answers/

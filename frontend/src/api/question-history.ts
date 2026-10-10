@@ -1,5 +1,6 @@
 export type ReviewRating = "dont_know" | "vague" | "basic" | "proficient";
 export interface PracticeReviewItem {
+  saved_answer_version_id?:number|null;
   id: number; question_id: number; session_item_id: number;
   review_rating: ReviewRating; reviewed_at: string; created_at: string; updated_at: string;
 }
@@ -19,6 +20,7 @@ export interface HistorySessionItem {
   status: "shown" | "completed" | "skipped";
 }
 export interface CanonicalHistory {
+  saved_answers?:import('./saved-answers').SavedAnswer[];
   canonical_question_id: number; member_question_ids: number[];
   sources: QuestionSourceItem[]; practice_reviews: PracticeReviewItem[];
   session_items: HistorySessionItem[];

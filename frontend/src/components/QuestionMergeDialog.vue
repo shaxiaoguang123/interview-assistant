@@ -18,6 +18,7 @@ const choices = computed(() => [{id:props.questionId,text:props.text},props.othe
 const preview = ref<MergePreview|null>(null);
 const topicIds = ref<number[]>([]);
 const tagIds = ref<number[]>([]);
+const pinnedAnswerId = ref<number|null>(null);
 const histories = ref<Record<number,CanonicalHistory>>({});
 const loading = ref(false);
 const submitting = ref(false);
@@ -41,6 +42,7 @@ async function loadPreview(refresh = false) {
     if (!current(r)) return;
     if(data.canonical_id !== target || data.source_question_id !== source || data.relation?.id !== props.relationId) throw new Error('Invalid preview');
     preview.value = data;
+    pinnedAnswerId.value = null;
     topicIds.value = data.topic_union.map(t=>t.id); tagIds.value = data.tag_union.map(t=>t.id);
     refreshed.value = refresh;
     // History is supplementary; a failed read stays visible as unavailable.
@@ -53,10 +55,10 @@ async function loadPreview(refresh = false) {
 }
 async function confirm() {
   const data = preview.value;
-  if(!data || submitting.value || loading.value || stale.value || error.value) return;
+  if(!data || submitting.value || loading.value || stale.value || error.value || ((data.pinned_answers?.length??0)>1 && pinnedAnswerId.value===null)) return;
   const r = revision; submitting.value = true;
   try {
-    const result = await mergeQuestions(data,[...topicIds.value],[...tagIds.value]);
+    const result = await mergeQuestions(data,[...topicIds.value],[...tagIds.value],pinnedAnswerId.value);
     if(!current(r)) return;
     if(result.id !== data.canonical_id) throw new Error('Invalid merge response');
     emit('merged',{canonicalId:data.canonical_id,sourceId:data.source_question_id});
@@ -118,6 +120,7 @@ onBeforeUnmount(()=>{
             <RouterLink :to="`/questions/${member.id}?history=1`" target="_blank">查看原题与来源 ↗</RouterLink>
           </article>
         </div>
+        <fieldset v-if="(preview.pinned_answers?.length??0)>1" class="merge-pin-choice" :disabled="submitting || stale" aria-label="选择归并后置顶回答"><legend>选择唯一的首选回答</legend><p class="helper">双方都有置顶回答。请选择一条继续置顶，其他回答仅取消置顶，正文和版本全部保留。</p><label v-for="a in preview.pinned_answers" :key="a.id"><input v-model="pinnedAnswerId" type="radio" name="merge-pinned-answer" :value="a.id" :aria-label="`保留置顶回答 ${a.id}`" /><span><strong>回答 #{{ a.id }} · 原题 #{{ a.question_id }} · v{{ a.version_no }}</strong><span class="merge-pin-content">{{ a.content }}</span></span></label></fieldset>
         <section class="merge-taxonomy" aria-label="最终归并分类">
           <h3>规范题的最终分类</h3><p class="helper">默认选中双方分类并集，可以保留或移除，也可以补充分类。</p>
           <p v-if="hasInactive" class="merge-note">停用分类可保留为历史分类，或在本次归并中移除。</p>
@@ -129,12 +132,13 @@ onBeforeUnmount(()=>{
         <div class="merge-result"><strong>归并后保留 #{{ preview.canonical_id }}</strong><p>#{{ preview.source_question_id }} 的原文、截图、OCR 与练习记录保留原始 ID。新搜索和新练习只显示规范题；收藏和错题按整个归并组汇总。</p></div>
       </template>
     </div>
-    <footer class="merge-footer"><p class="helper">{{ submitting ? '正在归并，请等待完成…' : '取消仅关闭预览，同题审核结论会保留，可稍后继续或重新分类。' }}</p><div class="action-row"><button type="button" aria-label="取消归并" :disabled="submitting" @click="close">取消</button><button type="button" class="primary" aria-label="确认归并" :disabled="!preview || loading || submitting || stale || !!error" @click="confirm">{{ submitting?'正在归并…':'确认归并' }}</button></div></footer>
+    <footer class="merge-footer"><p class="helper">{{ submitting ? '正在归并，请等待完成…' : '取消仅关闭预览，同题审核结论会保留，可稍后继续或重新分类。' }}</p><div class="action-row"><button type="button" aria-label="取消归并" :disabled="submitting" @click="close">取消</button><button type="button" class="primary" aria-label="确认归并" :disabled="!preview || loading || submitting || stale || !!error || ((preview.pinned_answers?.length??0)>1 && pinnedAnswerId===null)" @click="confirm">{{ submitting?'正在归并…':'确认归并' }}</button></div></footer>
   </dialog>
 </template>
 
 <style scoped>
 .merge-dialog { width:min(1024px,calc(100vw - 48px)); max-height:calc(100dvh - 48px); padding:0; border:1px solid var(--border); border-radius:16px; color:var(--ink); background:var(--surface); box-shadow:0 24px 80px #172b4d33; overflow:hidden; }
+.merge-pin-choice{margin-top:20px;padding:16px;background:var(--brand-soft);}.merge-pin-choice label{display:flex;flex-direction:row;gap:12px;margin:12px 0;}.merge-pin-content{display:block;white-space:pre-wrap;overflow-wrap:anywhere;max-height:140px;overflow:auto;font-size:13px;margin-top:8px;}
 .merge-dialog[open] {display:flex;flex-direction:column;}
 .merge-dialog::backdrop {background:#172b4d70;}
 .merge-header {flex-shrink:0;display:flex;justify-content:space-between;align-items:flex-start;gap:16px;padding:24px 28px;border-bottom:1px solid var(--border);}

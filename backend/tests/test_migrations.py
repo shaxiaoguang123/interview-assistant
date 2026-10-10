@@ -738,7 +738,7 @@ def test_phase1c_migration_failure_rolls_back_earlier_ddl(tmp_path):
             }
 
         with pytest.raises(OperationalError, match="question_relation"):
-            command.upgrade(config, "head")
+            command.upgrade(config, "0004_question_relations")
 
         with engine.connect() as connection:
             assert connection.scalar(text("SELECT version_num FROM alembic_version")) == (
@@ -767,7 +767,7 @@ def test_phase1c_migration_failure_rolls_back_earlier_ddl(tmp_path):
         with engine.begin() as connection:
             connection.execute(text("DROP TABLE question_relation"))
 
-        command.upgrade(config, "head")
+        command.upgrade(config, "0004_question_relations")
         with engine.connect() as connection:
             assert connection.scalar(text("SELECT version_num FROM alembic_version")) == (
                 "0004_question_relations"
@@ -784,7 +784,7 @@ def test_phase1c_migration_failure_rolls_back_earlier_ddl(tmp_path):
 def test_phase1c_downgrade_refuses_to_drop_relation_or_merge_data(tmp_path, payload_kind):
     database_path = tmp_path / f"nonempty-0004-{payload_kind}.sqlite3"
     config, database_url = _migration_config(database_path)
-    command.upgrade(config, "head")
+    command.upgrade(config, "0004_question_relations")
     engine = create_engine(database_url)
     try:
         with engine.begin() as connection:
@@ -848,7 +848,7 @@ def test_phase1c_downgrade_refuses_to_drop_relation_or_merge_data(tmp_path, payl
 
 def test_phase1c_empty_database_downgrade_to_0003_is_safe(tmp_path):
     config, database_url = _migration_config(tmp_path / "empty-0004.sqlite3")
-    command.upgrade(config, "head")
+    command.upgrade(config, "0004_question_relations")
     command.downgrade(config, "0003_phase1b_sources")
 
     engine = create_engine(database_url)

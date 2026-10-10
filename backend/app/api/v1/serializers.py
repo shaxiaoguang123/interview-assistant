@@ -61,6 +61,7 @@ def review_json(review):
         "question_id": review.question_id,
         "session_item_id": review.session_item_id,
         "review_rating": review.review_rating,
+        "saved_answer_version_id": review.saved_answer_version_id,
         "reviewed_at": as_utc(review.reviewed_at),
         "created_at": as_utc(review.created_at),
         "updated_at": as_utc(review.updated_at),

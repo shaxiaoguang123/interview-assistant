@@ -12,6 +12,7 @@ from .api.v1.questions import blueprint as questions_blueprint
 from .api.v1.sources import blueprint as sources_blueprint
 from .api.v1.tags import blueprint as tags_blueprint
 from .api.v1.topics import blueprint as topics_blueprint
+from .api.v1.saved_answers import blueprint as saved_answers_blueprint
 from .config import Config
 from .db import init_db
 from .errors import register_error_handlers
@@ -50,6 +51,7 @@ def create_app(test_config: dict | None = None) -> Flask:
     app.register_blueprint(questions_blueprint)
     app.register_blueprint(practice_sessions_blueprint)
     app.register_blueprint(practice_reviews_blueprint)
+    app.register_blueprint(saved_answers_blueprint)
     _register_frontend_routes(app)
     app.register_blueprint(topics_blueprint)
     app.register_blueprint(tags_blueprint)
