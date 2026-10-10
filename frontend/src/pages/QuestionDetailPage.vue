@@ -53,7 +53,8 @@ const loading = ref(true);
 const questionId = computed(() => Number(route.params.id));
 let questionLoadRevision = 0;
 let historyLoadRevision = 0;
-const readOnly = computed(() => question.value?.status === 'merged');
+const isPendingCandidate = computed(() => question.value?.status === 'pending_review');
+const readOnly = computed(() => question.value?.status === 'merged' || isPendingCandidate.value);
 
 function displayError(error: unknown): string {
   if (error instanceof ApiError) {
@@ -281,9 +282,10 @@ onBeforeUnmount(() => { questionLoadRevision += 1; historyLoadRevision += 1; });
       <div v-if="route.query.from_question && /^\d+$/.test(String(route.query.from_question))" class="canonical-banner">原题 #{{ route.query.from_question }} 已归并至当前规范题。<RouterLink :to="`/questions/${route.query.from_question}?history=1`">查看原始正文与历史</RouterLink></div>
       <article class="question-overview">
       <p v-if="question.archived_at">已归档</p>
-      <p v-else class="badge">{{ readOnly ? "归并历史" : "正式题目" }}</p>
+      <p v-else class="badge">{{ isPendingCandidate ? "待审核 OCR 候选" : readOnly ? "归并历史" : "正式题目" }}</p>
       <p class="question-reading" aria-label="当前题目正文">{{ question.text }}</p>
-      <p v-if="readOnly" role="status">此题已归并，原始内容只读。<RouterLink :to="`/questions/${question.canonical_question_id}`">打开规范题 #{{ question.canonical_question_id }}</RouterLink></p>
+      <p v-if="isPendingCandidate" class="canonical-banner">此 OCR 候选尚未入库，原始证据只读。请在收件箱校对、确认或归并。<RouterLink to="/inbox">返回截图收件箱</RouterLink></p>
+      <p v-else-if="readOnly" role="status">此题已归并，原始内容只读。<RouterLink :to="`/questions/${question.canonical_question_id}`">打开规范题 #{{ question.canonical_question_id }}</RouterLink></p>
       <p v-if="history && history.member_question_ids.length > 1" class="canonical-group"><span class="badge accent">规范题 #{{ question.canonical_question_id }}</span> {{ history.member_question_ids.length }} 道原题 · {{ history.sources.length }} 条来源 · {{ history.practice_reviews.length }} 次自评</p>
       <TopicTagPicker :topics="question.topics" :tags="question.tags" />
       <div class="action-row question-actions"><button v-if="!readOnly" :class="{selected:question.state.is_favorite}" type="button" :aria-label="question.state.is_favorite ? '取消收藏' : '收藏'" @click="patchState('is_favorite')">

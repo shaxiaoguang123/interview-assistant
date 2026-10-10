@@ -335,6 +335,8 @@ async function openJob(
 }
 
 function selectCandidate(candidate: Candidate, preferredSourceId: number | null = null) {
+  // Re-clicking the selected row must preserve its editor draft and review gate.
+  if (selectedCandidateId.value === candidate.id && preferredSourceId === null) return;
   candidateSelectionRevision.value += 1;
   candidateDraftDirty.value = false;
   mergeSuccess.value = null;

@@ -169,3 +169,29 @@ it('requires saving OCR draft edits before independent confirmation or similarit
   await w.get('form[aria-label="候选题正文与分类"]').trigger('submit');
   expect(w.emitted('save')?.[0]?.[0]).toMatchObject({expected_revision:3,text:'尚未保存正文'});
 });
+it('keeps the unsaved OCR draft gate when reselecting the current candidate',async()=>{
+  vi.stubGlobal('fetch',vi.fn(async(input:RequestInfo|URL)=>{
+    const path=String(input);
+    if(path==='/api/v1/sources')return json([{id:1,display_width:1100,display_height:700,sha256:'a',ingestion_jobs:[{id:11,source_asset_id:1,status:'succeeded',stage:'completed',candidate_count:1}]}]);
+    if(path.endsWith('/candidates'))return json([{...detail(2),status:'pending_review',candidate_state:'pending_review',candidate_revision:0,split_from_candidate_id:null,split_child_ids:[],superseded_by_candidate_id:null,sources:[]}]);
+    if(path.includes('similar-candidates'))return json({...similar(2),candidate_state:'pending_review',candidates:[{...rel(),other_question:{...props.otherQuestion,id:1}}]});
+    return json([]);
+  }));const w=mount(InboxPage,{global:{stubs:{RouterLink:true}}});wrappers.push(w);await flushPromises();
+  await w.get('button[aria-label="打开导入任务 11"]').trigger('click');await flushPromises();
+  await w.get('textarea[aria-label="候选题正文"]').setValue('未保存的草稿');await flushPromises();
+  expect(w.get('button[aria-label="确认为同题并归并关系 5"]').attributes('disabled')).toBeDefined();
+  await w.get('button[aria-label="查看候选题 2"]').trigger('click');await flushPromises();
+  expect(w.get('textarea[aria-label="候选题正文"]').element).toHaveProperty('value','未保存的草稿');
+  expect(w.get('button[aria-label="确认为同题并归并关系 5"]').attributes('disabled')).toBeDefined();
+});
+it('opens pending OCR original evidence as read-only with an Inbox link',async()=>{
+  vi.stubGlobal('fetch',vi.fn(async(input:RequestInfo|URL)=>{
+    const path=String(input);if(path.endsWith('/history'))return json(history(2));
+    if(path.endsWith('/topics')||path.endsWith('/tags'))return json([]);
+    return json({...detail(2),status:'pending_review',canonical_question_id:null});
+  }));const router=createAppRouter(createMemoryHistory());await router.push('/questions/2?history=1');await router.isReady();
+  const w=mount(QuestionDetailPage,{global:{plugins:[router]}});wrappers.push(w);await flushPromises();
+  expect(w.text()).toContain('待审核 OCR 候选');expect(w.find('textarea[aria-label="题目正文"]').exists()).toBe(false);
+  expect(w.find('button[aria-label="收藏"]').exists()).toBe(false);expect(w.find('a[href="/inbox"]').exists()).toBe(true);
+  expect(w.text()).not.toContain('此题已归并');
+});
