@@ -1,6 +1,8 @@
 <script setup lang="ts">
-import { onBeforeUnmount, ref, watch } from "vue";
+import { nextTick, onBeforeUnmount, ref, watch } from "vue";
 import { RouterLink } from "vue-router";
+import QuestionMergeDialog from "./QuestionMergeDialog.vue";
+import type { MergeOutcome } from "../api/question-merge";
 import { ApiError } from "../api/client";
 import {
   getSimilarCandidates, reviewRelation,
@@ -13,7 +15,9 @@ const props = withDefaults(defineProps<{
   contextKey?: string;
   disabled?: boolean;
 }>(), { contextKey: "", disabled: false });
-const emit = defineEmits<{ state: [state: RelationReviewState] }>();
+const emit = defineEmits<{ state: [state: RelationReviewState]; merged: [outcome: MergeOutcome] }>();
+const panelElement = ref<HTMLElement | null>(null);
+const mergeRelation = ref<QuestionRelationItem | null>(null);
 const data = ref<SimilarityResult | null>(null);
 const loading = ref(false);
 const reviewing = ref(false);
@@ -57,6 +61,7 @@ async function load(scan = false) {
     }
     data.value = result;
     publish(!result.confirmation_blocked);
+    return result;
   } catch (error) {
     if (isCurrent(start, revision)) errorMessage.value = displayError(error);
   } finally {
@@ -72,10 +77,15 @@ async function decide(relation: QuestionRelationItem, type: RelationType, decisi
   deferredMessage.value = "";
   publish(false);
   try {
-    await reviewRelation(start.questionId, relation, type, decision);
+    if (type !== "same_question" || decision !== "accepted" || relation.decision_status !== "accepted" || relation.relation_type !== "same_question") {
+      await reviewRelation(start.questionId, relation, type, decision);
+    }
     if (!isCurrent(start, revision)) return;
     // Reread the complete gate counts and the next unresolved row beyond Top-20.
-    await load();
+    const refreshed = await load();
+    if (refreshed && type === "same_question" && decision === "accepted") {
+      mergeRelation.value = refreshed.candidates.find(row => row.id === relation.id) ?? null;
+    }
   } catch (error) {
     if (isCurrent(start, revision)) {
       errorMessage.value = error instanceof ApiError && error.status === 409
@@ -93,38 +103,51 @@ function decisionLabel(relation: QuestionRelationItem): string {
   return { same_question: "同题待归并", related_question: "人工审核：相关题", different_question: "人工审核：不同题" }[relation.relation_type];
 }
 
-watch(() => [props.questionId, props.text, props.contextKey], () => void load(), { immediate: true, flush: "sync" });
+async function cancelMerge() {
+  const relationId = mergeRelation.value?.id;
+  mergeRelation.value = null;
+  await nextTick();
+  panelElement.value?.querySelector<HTMLButtonElement>(`button[aria-label="确认为同题并归并关系 ${relationId}"]`)?.focus();
+}
+async function merged(outcome: MergeOutcome) {
+  mergeRelation.value = null;
+  emit("merged", outcome);
+  // A surviving root can refresh its gate. A merged source is refreshed by its parent.
+  if (outcome.canonicalId === props.questionId) await load();
+}
+
+watch(() => [props.questionId, props.text, props.contextKey], () => { mergeRelation.value = null; void load(); }, { immediate: true, flush: "sync" });
 onBeforeUnmount(() => { alive = false; requestRevision += 1; });
 </script>
 
 <template>
-  <section aria-label="相似题审核" class="relation-panel">
-    <h3>相似题审核</h3>
+  <section ref="panelElement" aria-label="相似题审核" class="relation-panel">
+    <div class="relation-heading"><div><h3>相似题审核</h3><span v-if="data" class="helper">关系 {{ data.total_count }} · 待处理 {{ data.unresolved_count }}</span></div>
     <p v-if="loading" role="status">正在加载相似题…</p>
     <p v-if="errorMessage" role="alert">相似题加载或审核失败：{{ errorMessage }}</p>
     <div class="action-row"><button type="button" aria-label="重新加载相似题" :disabled="loading || reviewing || disabled" @click="load()">重新加载相似题</button>
-    <button type="button" aria-label="重新扫描相似题" :disabled="loading || reviewing || disabled" @click="load(true)">重新扫描相似题</button></div>
+    <button type="button" aria-label="重新扫描相似题" :disabled="loading || reviewing || disabled" @click="load(true)">重新扫描相似题</button></div></div>
     <template v-if="data && !loading">
-      <p>关系 {{ data.total_count }} · 待处理 {{ data.unresolved_count }}</p>
+
       <p v-if="data.total_count > data.candidates.length">最多显示 20 条，优先展示待处理关系；处理后继续显示其余关系。</p>
       <p v-if="data.scan_required" role="alert">正文或题目状态已变化，请重新扫描与审核。</p>
       <p v-if="data.unresolved_count > 0" class="relation-hint">
-        同题需等待后续规范题归并功能。可暂不处理；确定为误报时可排除，或明确标记为相关题、不同题。
+        先判断是否同题；同题进入归并预览，相关或不同题可单独入库。规则建议不会自动归并。
       </p>
       <p v-if="!data.candidates.length && !data.scan_required && !errorMessage">暂无相似题建议</p>
       <p v-if="deferredMessage" role="status">{{ deferredMessage }}</p>
       <ul v-if="data.candidates.length" aria-label="相似关系列表" class="relation-list">
-        <li v-for="relation in data.candidates" :key="relation.id" :data-relation-id="relation.id" class="relation-row">
+        <li v-for="(relation, index) in data.candidates" :key="relation.id" :data-relation-id="relation.id" class="relation-row">
+          <details :open="index === 0"><summary class="relation-summary"><span class="relation-question">#{{ relation.other_question.id }} · {{ relation.other_question.text }}</span><span class="badge" :class="relation.decision_status === 'suggested' ? 'warning' : 'accent'">{{ decisionLabel(relation) }}</span></summary>
           <p class="badge accent">{{ relation.match_kind === "exact" ? "完全重复（规范化文本）" : "近似建议" }} · 相似度 {{ relation.confidence?.toFixed(3) ?? "未知" }}</p>
-          <p class="relation-question">{{ relation.other_question.text }} · #{{ relation.other_question.id }}</p>
           <RouterLink v-if="relation.other_question.canonical_question_id" :to="`/questions/${relation.other_question.canonical_question_id}`">查看题目</RouterLink>
-          <p>{{ decisionLabel(relation) }}</p>
-          <div class="relation-actions"><button type="button" :aria-label="`排除误报关系 ${relation.id}`" :disabled="loading || reviewing || disabled || !!errorMessage || data.scan_required" @click="decide(relation, 'same_question', 'rejected')">排除误报</button>
+          <div class="relation-actions"><button type="button" class="primary" :aria-label="`确认为同题并归并关系 ${relation.id}`" :disabled="loading || reviewing || disabled || !!errorMessage || data.scan_required" @click="decide(relation, 'same_question', 'accepted')">{{ relation.decision_status === 'accepted' && relation.relation_type === 'same_question' ? '继续归并' : '确认为同题并归并' }}</button><button type="button" :aria-label="`排除误报关系 ${relation.id}`" :disabled="loading || reviewing || disabled || !!errorMessage || data.scan_required" @click="decide(relation, 'same_question', 'rejected')">排除误报</button>
           <button type="button" :aria-label="`标记为相关题关系 ${relation.id}`" :disabled="loading || reviewing || disabled || !!errorMessage || data.scan_required" @click="decide(relation, 'related_question', 'accepted')">标记为相关题</button>
           <button type="button" :aria-label="`标记为不同题关系 ${relation.id}`" :disabled="loading || reviewing || disabled || !!errorMessage || data.scan_required" @click="decide(relation, 'different_question', 'accepted')">标记为不同题</button>
-          <button type="button" :aria-label="`暂不处理关系 ${relation.id}`" :disabled="loading || reviewing || disabled" @click="deferredMessage = '保留建议，待规范题归并功能完成后处理。'">暂不处理</button></div>
+          <button type="button" :aria-label="`暂不处理关系 ${relation.id}`" :disabled="loading || reviewing || disabled" @click="deferredMessage = '保留建议，可稍后继续审核或归并。'">暂不处理</button></div></details>
         </li>
       </ul>
     </template>
+    <QuestionMergeDialog v-if="mergeRelation" :key="`${questionId}:${contextKey}:${mergeRelation.id}`" :question-id="questionId" :text="text" :other-question="mergeRelation.other_question" :relation-id="mergeRelation.id" :pending-candidate="data?.candidate_state === 'pending_review'" @close="cancelMerge" @merged="merged" />
   </section>
 </template>

@@ -373,3 +373,17 @@ def test_direct_question_mutations_reserve_sqlite_before_child_guard(app,pair,op
             else:archive_question(s,pair['source'])
     finally:event.remove(engine,'before_cursor_execute',record)
     assert statements[0]=='BEGIN IMMEDIATE'
+
+
+def test_merged_ocr_candidate_api_retains_original_id_and_exposes_root(client, app, pair):
+    job_id = _candidate(app, pair)
+    preview = _preview(app, pair)
+    payload = _payload(pair, preview)
+    payload['expected_candidate_revision'] = 3
+    _merge(app, pair, payload)
+    response = client.get(f'/api/v1/ingestions/{job_id}/candidates')
+    assert response.status_code == 200
+    candidate = next(q for q in response.json if q['id'] == pair['source'])
+    assert candidate['canonical_question_id'] == pair['target']
+    assert (candidate['status'], candidate['candidate_state'], candidate['candidate_revision']) == ('merged', 'confirmed', 4)
+    assert candidate['sources'][0]['question_source_id'] > 0

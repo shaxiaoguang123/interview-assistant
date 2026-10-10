@@ -79,6 +79,9 @@ def _candidate_json(candidate, child_ids: list[int], source_asset_id: int) -> di
         "archived_at": candidate.archived_at.isoformat() if candidate.archived_at else None,
         "candidate_state": candidate.ingestion_candidate_state,
         "candidate_revision": candidate.candidate_revision,
+        "canonical_question_id": candidate.merged_into_question_id or (
+            candidate.id if candidate.status == "active" else None
+        ),
         "origin_ingestion_job_id": candidate.origin_ingestion_job_id,
         "source_asset_id": source_asset_id,
         "topics": [

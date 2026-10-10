@@ -45,6 +45,7 @@ const emit = defineEmits<{
   split: [payload: Record<string, unknown>];
   "select-source": [sourceId: number];
   archive: [payload: { expected_revision: number }];
+  "dirty-change": [dirty: boolean];
   confirm: [payload: { expected_revision: number }];
 }>();
 
@@ -147,6 +148,12 @@ watch(
   { deep: true },
 );
 
+const dirty = computed(() => {
+  const locator = selectedSource.value?.locator_correction_json ?? selectedSource.value?.locator_json;
+  return textDraft.value !== props.candidate.text || !sameIds(selectedTopicIds.value, props.candidate.topics) ||
+    !sameIds(selectedTagIds.value, props.candidate.tags) || !!locator && coordinates.some(key => Number(correction.value[key]) !== locator[key]);
+});
+watch(dirty, value => emit('dirty-change', value), {immediate:true});
 function save() {
   const source = selectedSource.value;
   const locatorCorrection = {
@@ -208,12 +215,13 @@ function split() {
 
 <template>
   <section aria-label="候选题编辑" class="candidate-editor">
-    <h3>校对候选题</h3>
+    <h3>校对正文</h3>
     <form aria-label="候选题正文与分类" @submit.prevent="save">
       <label>
         候选题正文
         <textarea v-model="textDraft" aria-label="候选题正文" />
       </label>
+      <details class="candidate-classification"><summary>分类选择 <span class="helper">· {{ selectedTopicIds.length }} 个 Topic / {{ selectedTagIds.length }} 个 Tag</span></summary><div class="candidate-classification-grid">
       <label>
         Agent Topic
         <select v-model="selectedTopicIds" multiple aria-label="候选题 Topic">
@@ -231,7 +239,8 @@ function split() {
         </select>
       </label>
 
-      <fieldset v-if="candidate.sources.length" aria-label="来源区域修正">
+      </div></details>
+      <details v-if="candidate.sources.length" class="locator-tools"><summary>修正来源区域定位</summary><fieldset aria-label="来源区域修正">
         <legend>选择要修正的来源区域</legend>
         <label>
           来源区域
@@ -261,11 +270,11 @@ function split() {
             :aria-label="'来源定位 ' + coordinate"
           />
         </label>
-      </fieldset>
-      <button type="submit" :disabled="busy">保存候选修改</button>
+      </fieldset></details>
+      <button type="submit" :disabled="busy || !dirty">保存候选修改</button>
     </form>
 
-    <button
+    <div class="candidate-decision-actions"><button
       type="button"
       aria-label="切换候选拆分"
       @click="splitEnabled = !splitEnabled"
@@ -316,15 +325,16 @@ function split() {
     >
       拒绝候选题
     </button>
-    <p v-if="confirmationBlocked" class="confirmation-hint" aria-label="确认受限原因">请先完成相似题审核；加载失败或未处理的同题建议会阻止独立确认。可排除误报、明确分类，或暂留待处理。</p>
+    <p v-if="dirty" role="status" class="confirmation-hint">正文、分类或定位尚未保存，请先保存修改，再审核相似题或确认入库。</p>
+    <p v-else-if="confirmationBlocked" class="confirmation-hint" aria-label="确认受限原因">请先完成相似题审核；加载失败或未处理的同题建议会阻止独立确认。可排除误报、明确分类，或暂留待处理。</p>
     <button
       class="primary"
       type="button"
       aria-label="确认进入题库"
-      :disabled="busy || confirmationBlocked"
+      :disabled="busy || confirmationBlocked || dirty"
       @click="emit('confirm', { expected_revision: candidate.candidate_revision })"
     >
       确认进入题库
-    </button>
+    </button></div>
   </section>
 </template>

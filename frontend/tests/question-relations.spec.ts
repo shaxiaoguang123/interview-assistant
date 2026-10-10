@@ -42,15 +42,15 @@ function mountReview() {
 }
 
 describe("relation review panel", () => {
-  it("labels exact and approximate matches as suggestions and offers no same-question final acceptance", async () => {
+  it("labels rule matches as suggestions and offers explicit same-question review", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => json(result(1, [relation(), relation(2, 10, "trigram")]))));
     const wrapper = mountReview();
     await flushPromises();
     expect(wrapper.text()).toContain("完全重复");
     expect(wrapper.text()).toContain("近似建议");
     expect(wrapper.text()).toContain("规则建议，尚未确认");
-    expect(wrapper.text()).toContain("后续规范题归并功能");
-    expect(wrapper.findAll("button").some((button) => /确认同题|已归并|执行归并/.test(button.text()))).toBe(false);
+    expect(wrapper.text()).toContain("规则建议不会自动归并");
+    expect(wrapper.find("button[aria-label='确认为同题并归并关系 1']").exists()).toBe(true);
     await wrapper.get("button[aria-label='暂不处理关系 1']").trigger("click");
     expect(wrapper.text()).toContain("保留建议");
     expect(wrapper.emitted("state")?.at(-1)?.[0]).toMatchObject({ canConfirm: false });

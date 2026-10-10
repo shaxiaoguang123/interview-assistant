@@ -21,7 +21,7 @@ const source = {
 };
 const history = (id=1) => ({canonical_question_id:id,member_question_ids:[id,2],sources:[source],practice_reviews:[review],session_items:[{id:81,question_id:2,session_id:8,ordinal:1,status:"completed"}]});
 function deferred<T>() {let resolve!:(value:T)=>void;const promise=new Promise<T>(r=>resolve=r);return {promise,resolve};}
-async function setup(override:(path:string,init?:RequestInit)=>Response|Promise<Response>|undefined=()=>undefined,id=1){
+async function setup(override:(path:string,init?:RequestInit)=>Response|Promise<Response>|undefined=()=>undefined,id=1,historical=false){
   const fetchMock=vi.fn(async(input:RequestInfo|URL,init?:RequestInit)=>{
     const path=String(input);const custom=override(path,init);if(custom)return custom;
     const sim=emptySimilarityResponse(path);if(sim)return sim;
@@ -32,7 +32,7 @@ async function setup(override:(path:string,init?:RequestInit)=>Response|Promise<
     throw Error(path);
   });
   vi.stubGlobal('fetch',fetchMock);
-  const router=createAppRouter(createMemoryHistory());await router.push(`/questions/${id}`);await router.isReady();
+  const router=createAppRouter(createMemoryHistory());await router.push(`/questions/${id}${historical ? "?history=1" : ""}`);await router.isReady();
   const wrapper=mount(QuestionDetailPage,{global:{plugins:[router]}});await flushPromises();
   return {wrapper,router,fetchMock};
 }
@@ -88,7 +88,7 @@ describe('canonical detail history',()=>{
     expect(wrapper.text()).toContain('original child evidence');expect(wrapper.text()).not.toContain('FIRST A STALE');
   });
   it('keeps merged child content read-only with a canonical link',async()=>{
-    const {wrapper}=await setup(path=>path==='/api/v1/questions/2'?json(question(2,true)):undefined,2);
+    const {wrapper}=await setup(path=>path==='/api/v1/questions/2'?json(question(2,true)):undefined,2,true);
     expect(wrapper.text()).toContain('Question 2');expect(wrapper.find('form[aria-label="题目表单"]').exists()).toBe(false);
     expect(wrapper.find('button[aria-label="取消收藏"]').exists()).toBe(false);
     expect(wrapper.find('a[href="/questions/1"]').exists()).toBe(true);

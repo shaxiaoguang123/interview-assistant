@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { computed, ref, watch } from "vue";
-import { RouterLink, useRoute } from "vue-router";
+import { computed, onBeforeUnmount, ref, watch } from "vue";
+import { RouterLink, useRoute, useRouter } from "vue-router";
 import { ApiError, request } from "../api/client";
 import QuestionHistory from "../components/QuestionHistory.vue";
+import type { MergeOutcome } from "../api/question-merge";
 import type { CanonicalHistory, PracticeReviewItem } from "../api/question-history";
 import QuestionRelationReview from "../components/QuestionRelationReview.vue";
 import QuestionForm from "../components/QuestionForm.vue";
@@ -36,6 +37,8 @@ interface QuestionFormPayload {
 }
 
 const route = useRoute();
+const router = useRouter();
+const mergeSuccess = ref<MergeOutcome | null>(null);
 const question = ref<QuestionDetail | null>(null);
 const reviews = ref<PracticeReviewItem[]>([]);
 const history = ref<CanonicalHistory | null>(null);
@@ -99,6 +102,10 @@ async function loadQuestion(): Promise<void> {
       request<TaxonomyItem[]>("/api/v1/tags"),
     ]);
     if (requestRevision !== questionLoadRevision || requestedQuestionId !== questionId.value) return;
+    if (questionResult.status === 'merged' && route.query.history !== '1' && questionResult.canonical_question_id && questionResult.canonical_question_id !== requestedQuestionId) {
+      await router.replace({path:`/questions/${questionResult.canonical_question_id}`,query:{from_question:String(requestedQuestionId)}});
+      return;
+    }
     question.value = questionResult;
     topics.value = mergeHistoricalItems(topicResult, questionResult.topics);
     tags.value = mergeHistoricalItems(tagResult, questionResult.tags);
@@ -244,7 +251,14 @@ async function correctReview(review: PracticeReviewItem): Promise<void> {
   }
 }
 
-watch(questionId, () => void loadQuestion(), { immediate: true });
+async function onMerged(outcome: MergeOutcome) {
+  mergeSuccess.value = outcome;
+  if (outcome.canonicalId !== questionId.value) {
+    await router.replace({path:`/questions/${outcome.canonicalId}`,query:{from_question:String(outcome.sourceId)}});
+  } else await loadQuestion();
+}
+watch(questionId, () => void loadQuestion(), { immediate: true, flush: 'sync' });
+onBeforeUnmount(() => { questionLoadRevision += 1; historyLoadRevision += 1; });
 </script>
 
 <template>
@@ -263,20 +277,25 @@ watch(questionId, () => void loadQuestion(), { immediate: true });
     </template>
     <template v-if="!loading && question">
       <header class="page-heading"><div><span class="eyebrow">Question workspace · #{{ question.id }}</span><h2 id="question-detail-title">题目详情</h2></div><RouterLink to="/">返回题库</RouterLink></header>
+      <div v-if="mergeSuccess?.canonicalId === questionId" role="status" class="success-banner">归并成功，已保留规范题 #{{ mergeSuccess.canonicalId }}。</div>
+      <div v-if="route.query.from_question && /^\d+$/.test(String(route.query.from_question))" class="canonical-banner">原题 #{{ route.query.from_question }} 已归并至当前规范题。<RouterLink :to="`/questions/${route.query.from_question}?history=1`">查看原始正文与历史</RouterLink></div>
+      <article class="question-overview">
       <p v-if="question.archived_at">已归档</p>
       <p v-else class="badge">{{ readOnly ? "归并历史" : "正式题目" }}</p>
       <p class="question-reading" aria-label="当前题目正文">{{ question.text }}</p>
       <p v-if="readOnly" role="status">此题已归并，原始内容只读。<RouterLink :to="`/questions/${question.canonical_question_id}`">打开规范题 #{{ question.canonical_question_id }}</RouterLink></p>
-      <p v-else class="group-scope">取消收藏和取消错题标记作用于整个归并组。</p>
+      <p v-if="history && history.member_question_ids.length > 1" class="canonical-group"><span class="badge accent">规范题 #{{ question.canonical_question_id }}</span> {{ history.member_question_ids.length }} 道原题 · {{ history.sources.length }} 条来源 · {{ history.practice_reviews.length }} 次自评</p>
       <TopicTagPicker :topics="question.topics" :tags="question.tags" />
-      <button v-if="!readOnly" type="button" :aria-label="question.state.is_favorite ? '取消收藏' : '收藏'" @click="patchState('is_favorite')">
+      <div class="action-row question-actions"><button v-if="!readOnly" :class="{selected:question.state.is_favorite}" type="button" :aria-label="question.state.is_favorite ? '取消收藏' : '收藏'" @click="patchState('is_favorite')">
         {{ question.state.is_favorite ? "取消收藏" : "收藏" }}
       </button>
-      <button v-if="!readOnly" type="button" :aria-label="question.state.is_wrong ? '取消错题标记' : '标记错题'" @click="patchState('is_wrong')">
+      <button v-if="!readOnly" :class="{selected:question.state.is_wrong}" type="button" :aria-label="question.state.is_wrong ? '取消错题标记' : '标记错题'" @click="patchState('is_wrong')">
         {{ question.state.is_wrong ? "取消错题标记" : "标记错题" }}
       </button>
       <button v-if="!readOnly && !question.archived_at" type="button" :disabled="historyLoading || !!historyLoadError || (history?.member_question_ids.length ?? 0) > 1" @click="archiveQuestion">归档</button>
+      </div><p v-if="!readOnly" class="group-scope">取消收藏和取消错题标记作用于整个归并组。</p>
       <p v-if="history && history.member_question_ids.length > 1" class="helper">归并组暂不支持整组归档，原始题目与历史继续保留。</p>
+      </article>
       <details v-if="!readOnly" class="editor-panel"><summary>编辑题目与分类</summary>
       <QuestionForm
         :initial-text="question.text"
@@ -293,6 +312,7 @@ watch(questionId, () => void loadQuestion(), { immediate: true });
         :key="question.id"
         :question-id="question.id"
         :text="question.text"
+        @merged="onMerged"
       />
       <section aria-label="归并组历史" class="group-history">
         <p v-if="historyLoading" role="status">正在加载题目历史…</p>

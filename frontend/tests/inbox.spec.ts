@@ -855,7 +855,7 @@ describe("screenshot inbox and OCR viewer", () => {
     await wrapper.get("[aria-label='打开导入任务 11']").trigger("click");
     await flushPromises();
     await wrapper.get("[aria-label='查看候选题 102']").trigger("click");
-    await wrapper.get("[aria-label='选择合并候选 101']").setValue(true);
+    await wrapper.get("[aria-label='选择 OCR 候选区域 101']").setValue(true);
     await wrapper.get("textarea[aria-label='合并后题目正文']").setValue("Combined");
     await wrapper.get("form[aria-label='候选题同任务合并']").trigger("submit.prevent");
     await flushPromises();
