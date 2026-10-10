@@ -22,7 +22,7 @@ afterEach(() => { wrappers.splice(0).forEach(w => w.unmount()); document.body.in
 function api(options:{pending?:boolean;stale?:boolean} = {}) {
   let stale = options.stale;
   const fetch = vi.fn(async(input:RequestInfo|URL,init?:RequestInit)=>{
-    const path = String(input);
+    const path = String(input);if (/\/questions\/\d+\/saved-answers$/.test(path)) return {ok:true,status:200,json:async()=>[]} as Response;
     if(path.endsWith('/history')) return json({sources:[],practice_reviews:[],session_items:[],member_question_ids:[1]});
     if(init?.method === 'POST') {
       if(stale) {stale=false;return json({error:{code:'MERGE_PREVIEW_STALE',message:'changed'}},409);}
@@ -92,7 +92,7 @@ const detail = (id:number,merged=false)=>({id,text:`原始正文 ${id}`,status:m
 const history = (id:number)=>({canonical_question_id:id,member_question_ids:[id],sources:[],practice_reviews:[],session_items:[]});
 it('accepts same_question, keeps confirmation blocked on cancel, and reopens accepted review without another write',async()=>{
   let accepted=false;const fetch=vi.fn(async(input:RequestInfo|URL,init?:RequestInit)=>{
-    const path=String(input);
+    const path=String(input);if (/\/questions\/\d+\/saved-answers$/.test(path)) return {ok:true,status:200,json:async()=>[]} as Response;
     if(init?.method==='PATCH'){accepted=true;return json({...rel(),decision_status:'accepted'});}
     if(path.endsWith('/history'))return json(history(1));
     if(path.includes('merge-preview'))return json(preview());
@@ -110,7 +110,7 @@ it('accepts same_question, keeps confirmation blocked on cancel, and reopens acc
 });
 it('replaces a merged child route, preserves explicit original history access, and ignores old child loads',async()=>{
   vi.stubGlobal('fetch',vi.fn(async(input:RequestInfo|URL)=>{
-    const path=String(input);if(path.endsWith('/history'))return json({...history(1),member_question_ids:[1,2]});
+    const path=String(input);if (/\/questions\/\d+\/saved-answers$/.test(path)) return {ok:true,status:200,json:async()=>[]} as Response;if(path.endsWith('/history'))return json({...history(1),member_question_ids:[1,2]});
     if(path.includes('similar-candidates'))return json(similar(1,false,[]));
     if(path.endsWith('/topics')||path.endsWith('/tags'))return json([]);
     return json(detail(path.endsWith('/2')?2:1,path.endsWith('/2')));
@@ -123,7 +123,7 @@ it('replaces a merged child route, preserves explicit original history access, a
 it('refreshes a surviving detail and history after the GUI merge',async()=>{
   let merged=false;let accepted=false;let reads=0;
   vi.stubGlobal('fetch',vi.fn(async(input:RequestInfo|URL,init?:RequestInit)=>{
-    const path=String(input);
+    const path=String(input);if (/\/questions\/\d+\/saved-answers$/.test(path)) return {ok:true,status:200,json:async()=>[]} as Response;
     if(path.endsWith('/merge')){merged=true;return json({id:1});}
     if(init?.method==='PATCH'){accepted=true;return json({...rel(),decision_status:'accepted'});}
     if(path.includes('merge-preview'))return json(preview());
@@ -143,7 +143,7 @@ it('refreshes an OCR candidate as confirmed merged history and offers its root',
   const candidate=()=>({...detail(2,merged),candidate_state:merged?'confirmed':'pending_review',candidate_revision:merged?4:3,
     status:merged?'merged':'pending_review',split_from_candidate_id:null,split_child_ids:[],superseded_by_candidate_id:null,sources:[]});
   vi.stubGlobal('fetch',vi.fn(async(input:RequestInfo|URL,init?:RequestInit)=>{
-    const path=String(input);
+    const path=String(input);if (/\/questions\/\d+\/saved-answers$/.test(path)) return {ok:true,status:200,json:async()=>[]} as Response;
     if(path.endsWith('/merge')){merged=true;return json({id:1});}
     if(init?.method==='PATCH'){accepted=true;return json({...rel(),decision_status:'accepted'});}
     if(path.includes('merge-preview'))return json(preview(1,true));
@@ -172,7 +172,7 @@ it('requires saving OCR draft edits before independent confirmation or similarit
 });
 it('keeps the unsaved OCR draft gate when reselecting the current candidate',async()=>{
   vi.stubGlobal('fetch',vi.fn(async(input:RequestInfo|URL)=>{
-    const path=String(input);
+    const path=String(input);if (/\/questions\/\d+\/saved-answers$/.test(path)) return {ok:true,status:200,json:async()=>[]} as Response;
     if(path==='/api/v1/sources')return json([{id:1,display_width:1100,display_height:700,sha256:'a',ingestion_jobs:[{id:11,source_asset_id:1,status:'succeeded',stage:'completed',candidate_count:1}]}]);
     if(path.endsWith('/candidates'))return json([{...detail(2),status:'pending_review',candidate_state:'pending_review',candidate_revision:0,split_from_candidate_id:null,split_child_ids:[],superseded_by_candidate_id:null,sources:[]}]);
     if(path.includes('similar-candidates'))return json({...similar(2),candidate_state:'pending_review',candidates:[{...rel(),other_question:{...props.otherQuestion,id:1}}]});
@@ -187,7 +187,7 @@ it('keeps the unsaved OCR draft gate when reselecting the current candidate',asy
 });
 it('opens pending OCR original evidence as read-only with an Inbox link',async()=>{
   vi.stubGlobal('fetch',vi.fn(async(input:RequestInfo|URL)=>{
-    const path=String(input);if(path.endsWith('/history'))return json(history(2));
+    const path=String(input);if (/\/questions\/\d+\/saved-answers$/.test(path)) return {ok:true,status:200,json:async()=>[]} as Response;if(path.endsWith('/history'))return json(history(2));
     if(path.endsWith('/topics')||path.endsWith('/tags'))return json([]);
     return json({...detail(2),status:'pending_review',canonical_question_id:null});
   }));const router=createAppRouter(createMemoryHistory());await router.push('/questions/2?history=1');await router.isReady();

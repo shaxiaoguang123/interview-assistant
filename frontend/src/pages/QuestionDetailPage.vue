@@ -8,6 +8,7 @@ import type { CanonicalHistory, PracticeReviewItem } from "../api/question-histo
 import QuestionRelationReview from "../components/QuestionRelationReview.vue";
 import QuestionForm from "../components/QuestionForm.vue";
 import TopicTagPicker from "../components/TopicTagPicker.vue";
+import SavedAnswersPanel from "../components/answers/SavedAnswersPanel.vue";
 
 interface TaxonomyItem {
   id: number;
@@ -331,6 +332,7 @@ onBeforeUnmount(() => { questionLoadRevision += 1; historyLoadRevision += 1; });
         :text="question.text"
         @merged="onMerged"
       />
+      <SavedAnswersPanel v-if="!isPendingCandidate" :key="question.id" :question-id="question.id" :question-text="question.text" :read-only="readOnly" />
       <section aria-label="归并组历史" class="group-history">
         <p v-if="historyLoading" role="status">正在加载题目历史…</p>
         <template v-else-if="historyLoadError">

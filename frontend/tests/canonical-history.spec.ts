@@ -23,7 +23,7 @@ const history = (id=1) => ({canonical_question_id:id,member_question_ids:[id,2],
 function deferred<T>() {let resolve!:(value:T)=>void;const promise=new Promise<T>(r=>resolve=r);return {promise,resolve};}
 async function setup(override:(path:string,init?:RequestInit)=>Response|Promise<Response>|undefined=()=>undefined,id=1,historical=false,query=""){
   const fetchMock=vi.fn(async(input:RequestInfo|URL,init?:RequestInit)=>{
-    const path=String(input);const custom=override(path,init);if(custom)return custom;
+    const path=String(input);if (/\/questions\/\d+\/saved-answers$/.test(path)) return {ok:true,status:200,json:async()=>[]} as Response;const custom=override(path,init);if(custom)return custom;
     const sim=emptySimilarityResponse(path);if(sim)return sim;
     if(path==='/api/v1/topics'||path==='/api/v1/tags')return json([]);
     const detail=path.match(/^\/api\/v1\/questions\/(\d+)$/);if(detail)return json(question(Number(detail[1])));

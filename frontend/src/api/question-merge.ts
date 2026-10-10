@@ -13,17 +13,19 @@ export interface MergePreview {
   available_topics: MergeTaxonomy[]; available_tags: MergeTaxonomy[];
   relation: { id: number };
   expected_candidate_revision: number | null;
+  pinned_answers?:Array<{id:number;question_id:number;content:string;version_no:number}>;
 }
 export interface MergeOutcome { canonicalId: number; sourceId: number }
 export function getMergePreview(canonicalId: number, sourceId: number) {
   return request<MergePreview>(`/api/v1/questions/${canonicalId}/merge-preview?source_question_id=${sourceId}`);
 }
-export function mergeQuestions(preview: MergePreview, topicIds: number[], tagIds: number[]) {
+export function mergeQuestions(preview: MergePreview, topicIds: number[], tagIds: number[], pinnedAnswerId:number|null=null) {
   return request<{id: number}>(`/api/v1/questions/${preview.canonical_id}/merge`, {
     method:'POST', headers:{'Content-Type':'application/json'},
     body:JSON.stringify({canonical_id:preview.canonical_id, source_question_id:preview.source_question_id,
       relation_id:preview.relation.id, preview_token:preview.preview_token, topic_ids:topicIds, tag_ids:tagIds,
       ...(preview.expected_candidate_revision !== null ? {expected_candidate_revision:preview.expected_candidate_revision} : {}),
+      ...(pinnedAnswerId!==null ? {pinned_answer_id:pinnedAnswerId} : {}),
     }),
   });
 }
