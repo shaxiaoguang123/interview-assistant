@@ -55,6 +55,18 @@ let questionLoadRevision = 0;
 let historyLoadRevision = 0;
 const isPendingCandidate = computed(() => question.value?.status === 'pending_review');
 const readOnly = computed(() => question.value?.status === 'merged' || isPendingCandidate.value);
+const fromQuestionId = computed(() => {
+  const raw = route.query.from_question;
+  if (typeof raw !== "string" || !/^\d+$/.test(raw)) return null;
+  const id = Number(raw);
+  return Number.isSafeInteger(id) && id > 0 ? id : null;
+});
+const hasVerifiedFromQuestion = computed(() => {
+  const sourceId = fromQuestionId.value;
+  const currentHistory = history.value;
+  return sourceId !== null && currentHistory !== null && currentHistory.canonical_question_id === question.value?.id &&
+    sourceId !== question.value?.id && currentHistory.member_question_ids.includes(sourceId);
+});
 
 function displayError(error: unknown): string {
   if (error instanceof ApiError) {
@@ -258,7 +270,10 @@ async function onMerged(outcome: MergeOutcome) {
     await router.replace({path:`/questions/${outcome.canonicalId}`,query:{from_question:String(outcome.sourceId)}});
   } else await loadQuestion();
 }
-watch(questionId, () => void loadQuestion(), { immediate: true, flush: 'sync' });
+watch(questionId, (id) => {
+  if (mergeSuccess.value?.canonicalId !== id) mergeSuccess.value = null;
+  void loadQuestion();
+}, { immediate: true, flush: 'sync' });
 onBeforeUnmount(() => { questionLoadRevision += 1; historyLoadRevision += 1; });
 </script>
 
@@ -279,7 +294,7 @@ onBeforeUnmount(() => { questionLoadRevision += 1; historyLoadRevision += 1; });
     <template v-if="!loading && question">
       <header class="page-heading"><div><span class="eyebrow">Question workspace · #{{ question.id }}</span><h2 id="question-detail-title">题目详情</h2></div><RouterLink to="/">返回题库</RouterLink></header>
       <div v-if="mergeSuccess?.canonicalId === questionId" role="status" class="success-banner">归并成功，已保留规范题 #{{ mergeSuccess.canonicalId }}。</div>
-      <div v-if="route.query.from_question && /^\d+$/.test(String(route.query.from_question))" class="canonical-banner">原题 #{{ route.query.from_question }} 已归并至当前规范题。<RouterLink :to="`/questions/${route.query.from_question}?history=1`">查看原始正文与历史</RouterLink></div>
+      <div v-if="hasVerifiedFromQuestion" class="canonical-banner">原题 #{{ fromQuestionId }} 已归并至当前规范题。<RouterLink :to="`/questions/${fromQuestionId}?history=1`">查看原始正文与历史</RouterLink></div>
       <article class="question-overview">
       <p v-if="question.archived_at">已归档</p>
       <p v-else class="badge">{{ isPendingCandidate ? "待审核 OCR 候选" : readOnly ? "归并历史" : "正式题目" }}</p>

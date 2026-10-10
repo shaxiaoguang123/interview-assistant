@@ -21,7 +21,7 @@ const source = {
 };
 const history = (id=1) => ({canonical_question_id:id,member_question_ids:[id,2],sources:[source],practice_reviews:[review],session_items:[{id:81,question_id:2,session_id:8,ordinal:1,status:"completed"}]});
 function deferred<T>() {let resolve!:(value:T)=>void;const promise=new Promise<T>(r=>resolve=r);return {promise,resolve};}
-async function setup(override:(path:string,init?:RequestInit)=>Response|Promise<Response>|undefined=()=>undefined,id=1,historical=false){
+async function setup(override:(path:string,init?:RequestInit)=>Response|Promise<Response>|undefined=()=>undefined,id=1,historical=false,query=""){
   const fetchMock=vi.fn(async(input:RequestInfo|URL,init?:RequestInit)=>{
     const path=String(input);const custom=override(path,init);if(custom)return custom;
     const sim=emptySimilarityResponse(path);if(sim)return sim;
@@ -32,7 +32,7 @@ async function setup(override:(path:string,init?:RequestInit)=>Response|Promise<
     throw Error(path);
   });
   vi.stubGlobal('fetch',fetchMock);
-  const router=createAppRouter(createMemoryHistory());await router.push(`/questions/${id}${historical ? "?history=1" : ""}`);await router.isReady();
+  const router=createAppRouter(createMemoryHistory());await router.push(`/questions/${id}${query ? `?${query}` : historical ? "?history=1" : ""}`);await router.isReady();
   const wrapper=mount(QuestionDetailPage,{global:{plugins:[router]}});await flushPromises();
   return {wrapper,router,fetchMock};
 }
@@ -98,5 +98,27 @@ describe('canonical detail history',()=>{
     const archive=wrapper.findAll('button').find(b=>b.text()==='归档');
     expect(archive?.attributes('disabled')).toBeDefined();
     expect(wrapper.text()).toContain('归并组暂不支持整组归档');
+  });
+  it('does not trust an unrelated from_question query parameter',async()=>{
+    const {wrapper}=await setup(undefined,1,false,'from_question=999');
+    expect(wrapper.text()).not.toContain('原题 #999 已归并至当前规范题');
+  });
+  it('shows verified child provenance and hides it when the same route query changes',async()=>{
+    const {wrapper,router}=await setup(undefined,1,false,'from_question=2');
+    expect(wrapper.text()).toContain('原题 #2 已归并至当前规范题');
+    expect(wrapper.find('a[href="/questions/2?history=1"]').exists()).toBe(true);
+    await router.push('/questions/1?from_question=999');await flushPromises();
+    expect(wrapper.text()).not.toContain('原题 #999 已归并至当前规范题');
+  });
+  it('does not label the root itself as a merged source',async()=>{
+    const {wrapper}=await setup(undefined,1,false,'from_question=1');
+    expect(wrapper.text()).not.toContain('原题 #1 已归并至当前规范题');
+  });
+  it('waits for authoritative history before claiming a source was merged',async()=>{
+    const pending=deferred<Response>();
+    const {wrapper}=await setup(path=>path.endsWith('/history')?pending.promise:undefined,1,false,'from_question=2');
+    expect(wrapper.text()).not.toContain('原题 #2 已归并至当前规范题');
+    pending.resolve(json(history(1)));await flushPromises();
+    expect(wrapper.text()).toContain('原题 #2 已归并至当前规范题');
   });
 });

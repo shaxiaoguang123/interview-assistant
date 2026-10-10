@@ -110,7 +110,7 @@ it('accepts same_question, keeps confirmation blocked on cancel, and reopens acc
 });
 it('replaces a merged child route, preserves explicit original history access, and ignores old child loads',async()=>{
   vi.stubGlobal('fetch',vi.fn(async(input:RequestInfo|URL)=>{
-    const path=String(input);if(path.endsWith('/history'))return json(history(path.includes('/2/')?2:1));
+    const path=String(input);if(path.endsWith('/history'))return json({...history(1),member_question_ids:[1,2]});
     if(path.includes('similar-candidates'))return json(similar(1,false,[]));
     if(path.endsWith('/topics')||path.endsWith('/tags'))return json([]);
     return json(detail(path.endsWith('/2')?2:1,path.endsWith('/2')));
@@ -136,6 +136,7 @@ it('refreshes a surviving detail and history after the GUI merge',async()=>{
   await w.get('button[aria-label="确认归并"]').trigger('click');await flushPromises();
   expect(w.text()).toContain('归并成功');expect(w.text()).toContain('2 道原题');expect(reads).toBeGreaterThanOrEqual(3);
   await router.push('/questions/3');await flushPromises();expect(w.text()).not.toContain('归并成功');
+  await router.push('/questions/1');await flushPromises();expect(w.text()).not.toContain('归并成功');
 });
 it('refreshes an OCR candidate as confirmed merged history and offers its root',async()=>{
   let merged=false;let accepted=false;
