@@ -17,14 +17,14 @@ blueprint = Blueprint("practice_reviews_v1", __name__, url_prefix="/api/v1")
 @blueprint.post("/session-items/<int:session_item_id>/review")
 def post_practice_review(session_item_id: int):
     payload = request.get_json(silent=True)
-    if not isinstance(payload, dict) or set(payload) != {"review_rating"}:
+    if not isinstance(payload, dict) or "review_rating" not in payload or set(payload) - {"review_rating", "saved_answer_version_id"}:
         raise ApiError(
             400,
             "VALIDATION_ERROR",
             "Invalid PracticeReview",
-            {"body": "Expected only review_rating"},
+            {"body": "Expected review_rating and optional saved_answer_version_id"},
         )
-    review = record_practice_review(get_session(), session_item_id, payload["review_rating"])
+    review = record_practice_review(get_session(), session_item_id, payload["review_rating"], payload.get("saved_answer_version_id"))
     return jsonify(_review_json(review)), 201
 
 

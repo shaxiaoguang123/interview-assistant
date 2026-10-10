@@ -93,6 +93,9 @@ class PracticeReview(Base):
         ForeignKey("session_item.id", ondelete="RESTRICT"), nullable=False
     )
     review_rating: Mapped[str] = mapped_column(String(24), nullable=False)
+    saved_answer_version_id: Mapped[int | None] = mapped_column(
+        ForeignKey("saved_answer_version.id", ondelete="RESTRICT"), nullable=True
+    )
     reviewed_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=utc_now, server_default=func.current_timestamp()
     )

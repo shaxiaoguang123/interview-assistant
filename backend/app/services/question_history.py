@@ -7,6 +7,7 @@ from app.models.ingestion import QuestionSource, QuestionSourceOCRBlock
 from app.models.practice import PracticeReview, SessionItem
 from app.models.question import Question
 from app.repositories.questions import canonical_member_ids
+from app.services.saved_answers import list_answers
 
 
 def get_canonical_history(session: Session, question_id: int) -> dict:
@@ -34,4 +35,5 @@ def get_canonical_history(session: Session, question_id: int) -> dict:
     items = list(session.scalars(select(SessionItem).options(selectinload(SessionItem.question))
         .where(SessionItem.question_id.in_(members)).order_by(SessionItem.session_id, SessionItem.ordinal, SessionItem.id)))
     return {'canonical_question_id': canonical_id, 'member_question_ids': members,
-            'sources': sources, 'practice_reviews': reviews, 'session_items': items}
+            'sources': sources, 'practice_reviews': reviews, 'session_items': items,
+            'saved_answers': list_answers(session, question_id) if question.status in {'active', 'merged'} else []}

@@ -223,4 +223,5 @@ def get_question_history(question_id: int):
         'sources': [source_json(row) for row in history['sources']],
         'practice_reviews': [review_json(row) for row in history['practice_reviews']],
         'session_items': [session_item_json(row) for row in history['session_items']],
+        'saved_answers': history['saved_answers'],
     })

@@ -11,6 +11,7 @@ from app.models.taxonomy import utc_now
 from app.repositories import practice as practice_repository
 from app.services.practice_session import mark_session_completed_if_terminal
 from app.services.questions import get_question
+from app.services.question_relations import _begin_write
 
 
 REVIEW_RATINGS = {"dont_know", "vague", "basic", "proficient"}
@@ -27,10 +28,11 @@ def _validate_rating(value: object) -> str:
     return value
 
 
-def record_practice_review(session: Session, session_item_id: int, review_rating: str) -> PracticeReview:
+def record_practice_review(session: Session, session_item_id: int, review_rating: str, saved_answer_version_id: int | None = None) -> PracticeReview:
     rating = _validate_rating(review_rating)
     try:
         with session.begin():
+            _begin_write(session)
             item = practice_repository.get_session_item(session, session_item_id)
             if item is None:
                 raise ApiError(404, "NOT_FOUND", "Session item not found")
@@ -46,6 +48,10 @@ def record_practice_review(session: Session, session_item_id: int, review_rating
             if item.status != "shown":
                 raise ApiError(409, "CONFLICT", "SessionItem is not available for review")
 
+            if saved_answer_version_id is not None:
+                from app.services.saved_answers import validate_review_version
+                validate_review_version(session, item.question_id, saved_answer_version_id)
+
             now = utc_now()
             if not practice_repository.transition_shown_session_item(
                 session, item.id, status="completed", completed_at=now
@@ -57,6 +63,7 @@ def record_practice_review(session: Session, session_item_id: int, review_rating
                 question_id=item.question_id,
                 session_item_id=item.id,
                 review_rating=rating,
+                saved_answer_version_id=saved_answer_version_id,
                 reviewed_at=now,
                 created_at=now,
                 updated_at=now,
