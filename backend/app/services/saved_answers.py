@@ -71,7 +71,7 @@ def _source(session, question_id, item_id, review_id):
     return review
 
 
-def _append(session, answer, data):
+def _append(session, answer, data, *, origin_kind="user_written", based_on_version_id=None, assistant_output_id=None):
     content, rating, item_id, review_id = data
     review = _source(session, answer.question_id, item_id, review_id)
     number = (session.scalar(select(func.max(SavedAnswerVersion.version_no)).where(
@@ -79,7 +79,8 @@ def _append(session, answer, data):
     now = utc_now()
     version = SavedAnswerVersion(saved_answer_id=answer.id, version_no=number, content=content,
         self_rating=rating, self_rating_updated_at=now if rating is not None else None,
-        origin_kind="user_written", source_session_item_id=item_id, source_practice_review_id=review_id)
+        origin_kind=origin_kind, based_on_version_id=based_on_version_id, assistant_output_id=assistant_output_id,
+        source_session_item_id=item_id, source_practice_review_id=review_id)
     session.add(version)
     answer.updated_at = now
     session.flush()
@@ -109,7 +110,9 @@ def append_version(session, answer_id, payload):
     with session.begin():
         _begin_write(session)
         answer = _answer(session, answer_id, True)
-        version = _append(session, answer, data)
+        current=session.scalar(select(SavedAnswerVersion).where(SavedAnswerVersion.saved_answer_id==answer.id).order_by(SavedAnswerVersion.version_no.desc()).limit(1))
+        derivation={"origin_kind":"ai_assisted","based_on_version_id":current.id,"assistant_output_id":current.assistant_output_id} if current and current.assistant_output_id else {}
+        version = _append(session, answer, data, **derivation)
     return version
 
 

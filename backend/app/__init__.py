@@ -14,6 +14,9 @@ from .api.v1.tags import blueprint as tags_blueprint
 from .api.v1.topics import blueprint as topics_blueprint
 from .api.v1.saved_answers import blueprint as saved_answers_blueprint
 from .api.v1.progress import blueprint as progress_blueprint
+from .api.v1.materials import blueprint as materials_blueprint
+from .api.v1.assistant import blueprint as assistant_blueprint
+from .services.assistant import init_assistant
 from .config import Config
 from .db import init_db
 from .errors import register_error_handlers
@@ -43,6 +46,7 @@ def create_app(test_config: dict | None = None) -> Flask:
     if test_config:
         app.config.update(test_config)
 
+    init_assistant(app)
     register_error_handlers(app)
     init_db(app)
     register_local_security(app)
@@ -54,6 +58,8 @@ def create_app(test_config: dict | None = None) -> Flask:
     app.register_blueprint(practice_reviews_blueprint)
     app.register_blueprint(saved_answers_blueprint)
     app.register_blueprint(progress_blueprint)
+    app.register_blueprint(materials_blueprint)
+    app.register_blueprint(assistant_blueprint)
     _register_frontend_routes(app)
     app.register_blueprint(topics_blueprint)
     app.register_blueprint(tags_blueprint)
