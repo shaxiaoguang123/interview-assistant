@@ -10,9 +10,12 @@ from app.errors import ApiError
 from app.models.practice import PracticeSession, SessionItem
 from app.repositories import practice as practice_repository
 from app.services.questions import list_questions
+from app.services.review_schedule import as_utc
+from app.services.question_relations import _begin_write
+from app.repositories.questions import group_states
 
 
-SELECTOR_VERSION = "v1"
+SELECTOR_VERSION = "v2"
 DEFAULT_SESSION_SIZE = 10
 MAX_SESSION_SIZE = 100
 MAX_SELECTION_SEED = (2**32) - 1
@@ -28,7 +31,7 @@ def _rank_random_question(question_id: int, seed: int) -> bytes:
 
 
 def _validate_filters(mode: str, filters: object) -> tuple[dict, list[int], list[int]]:
-    if not isinstance(mode, str) or mode not in {"random", "topic", "tag"}:
+    if not isinstance(mode, str) or mode not in {"random", "topic", "tag", "favorite", "wrong", "due"}:
         raise ApiError(400, "VALIDATION_ERROR", "Invalid practice mode", {"mode": "Unknown mode"})
     if not isinstance(filters, dict):
         raise ApiError(400, "VALIDATION_ERROR", "Invalid practice filters", {"filters": "Must be an object"})
@@ -85,6 +88,26 @@ def _validate_seed(mode: str, selection_seed: object) -> int | None:
     return selection_seed
 
 
+def eligible_questions(session: Session, mode: str, filters: dict, *, now: datetime | None = None):
+    _, topic_ids, tag_ids = _validate_filters(mode, filters)
+    connection = session.connection()
+    if connection.dialect.name == 'sqlite' and not connection.connection.driver_connection.in_transaction:
+        connection.exec_driver_sql('BEGIN')
+    now = as_utc(now or datetime.now(timezone.utc))
+    candidates = list_questions(session, topic_ids=topic_ids or None, tag_ids=tag_ids or None)
+    flags = group_states(session, [q.id for q in candidates]) if mode in {"favorite", "wrong"} else {}
+    if mode == "favorite":
+        candidates = [q for q in candidates if flags[q.id]["is_favorite"]]
+    elif mode == "wrong":
+        candidates = [q for q in candidates if flags[q.id]["is_wrong"] or
+                      (q.state and q.state.last_review_rating == "dont_know")]
+    elif mode == "due":
+        candidates = [q for q in candidates if q.state and q.state.next_review_at and
+                      as_utc(q.state.next_review_at) <= now]
+        return sorted(candidates, key=lambda q: (as_utc(q.state.next_review_at), q.id))
+    return sorted(candidates, key=lambda q: q.id)
+
+
 def create_practice_session(
     session: Session,
     mode: str,
@@ -97,15 +120,10 @@ def create_practice_session(
     seed = _validate_seed(mode, selection_seed)
 
     with session.begin():
-        candidates = list_questions(
-            session,
-            topic_ids=topic_ids if mode == "topic" else None,
-            tag_ids=tag_ids if mode == "tag" else None,
-        )
+        _begin_write(session)
+        candidates = eligible_questions(session, mode, validated_filters)
         if mode == "random":
             candidates.sort(key=lambda question: _rank_random_question(question.id, seed))
-        else:
-            candidates.sort(key=lambda question: question.id)
         selected = candidates[:validated_limit]
 
         now = datetime.now(timezone.utc)

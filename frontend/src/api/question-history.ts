@@ -1,5 +1,6 @@
 export type ReviewRating = "dont_know" | "vague" | "basic" | "proficient";
 export interface PracticeReviewItem {
+  review_schedule?:import("./progress").ReviewSchedule;
   saved_answer_version_id?:number|null;
   id: number; question_id: number; session_item_id: number;
   review_rating: ReviewRating; reviewed_at: string; created_at: string; updated_at: string;

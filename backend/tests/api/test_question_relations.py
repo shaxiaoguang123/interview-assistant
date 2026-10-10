@@ -142,7 +142,7 @@ def test_explicit_review_allows_confirmation_without_changing_evidence_or_histor
     unchanged = client.get(f"/api/v1/ingestions/{candidate['origin_ingestion_job_id']}/candidates").get_json()[0]
     assert unchanged == candidate
     assert client.get(f"/api/v1/questions/{candidate['id']}/sources").get_json() == sources_before
-    assert client.get(f"/api/v1/questions/{active['id']}/practice-reviews").get_json() == [history]
+    assert client.get(f"/api/v1/questions/{active['id']}/practice-reviews").get_json() == [{key:value for key,value in history.items() if key not in {'canonical_question_id','review_schedule'}}]
     confirmed = client.post(confirm_url, json={"expected_revision": candidate["candidate_revision"]})
     assert confirmed.status_code == 200
     assert confirmed.get_json()["status"] == "active"

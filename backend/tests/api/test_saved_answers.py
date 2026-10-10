@@ -59,7 +59,7 @@ def test_explicit_creation_multiple_answers_versions_and_rating_separation(clien
     rated=client.patch(f"/api/v1/saved-answer-versions/{version['id']}/rating",json={'self_rating':4})
     assert rated.status_code==200
     history=client.get(f'/api/v1/questions/{q}/practice-reviews').get_json()
-    assert history==[review]  # No quality operation creates, edits or retimes mastery events.
+    assert history==[{key:value for key,value in review.items() if key not in {"canonical_question_id","review_schedule"}}]  # No quality operation creates, edits or retimes mastery events.
     assert client.patch(f"/api/v1/saved-answer-versions/{old['id']}/rating",json={'self_rating':1}).status_code==409
     with app.extensions['sqlalchemy_engine'].begin() as c:
         with pytest.raises(IntegrityError):
@@ -88,7 +88,7 @@ def test_completed_practice_save_keeps_real_source_and_review_time(client,app):
     v=saved['current_version']
     assert (saved['source_session_item_id'],v['source_session_item_id'],v['source_practice_review_id'])==(item['id'],item['id'],review['id'])
     current=client.get(f'/api/v1/questions/{q}/practice-reviews').get_json()[0]
-    assert current=={**review,'saved_answer_version_id':v['id']}
+    assert current=={**{key:value for key,value in review.items() if key not in {'canonical_question_id','review_schedule'}},'saved_answer_version_id':v['id']}
     # Double-click/retry cannot silently create two linked answers for the same event.
     assert client.post(f'/api/v1/questions/{q}/saved-answers',json={'content':'duplicate','source_session_item_id':item['id'],'source_practice_review_id':review['id']}).status_code==409
     assert len(client.get(f'/api/v1/questions/{q}/saved-answers').get_json())==1

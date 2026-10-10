@@ -2,6 +2,7 @@
 import { computed, onBeforeUnmount, ref, watch } from "vue";
 import { RouterLink, useRoute } from "vue-router";
 import { ApiError, request } from "../api/client";
+import { formatReviewTime, type ReviewSchedule } from "../api/progress";
 import PracticeRating from "../components/PracticeRating.vue";
 import { createSavedAnswer } from "../api/saved-answers";
 
@@ -31,7 +32,7 @@ const loading = ref(true);
 const skipping = ref(false);
 const reviewing = ref(false);
 const saving = ref(false);
-const saveChoice = ref<{item:SessionItem;reviewId:number;rating:string}|null>(null);
+const saveChoice = ref<{item:SessionItem;reviewId:number;rating:string;schedule?:ReviewSchedule}|null>(null);
 const savedAnswerId = ref<number|null>(null);
 const qualityRating = ref<number|null>(null);
 const masteryLabel:Record<string,string>={dont_know:'不会',vague:'模糊',basic:'基本会',proficient:'熟练'};
@@ -102,13 +103,13 @@ async function recordRating(reviewRating: string): Promise<void> {
   errorMessage.value = "";
   reviewing.value = true;
   try {
-    const review = await request<{id:number}>(`/api/v1/session-items/${itemId}/review`, {
+    const review = await request<{id:number;review_schedule?:ReviewSchedule}>(`/api/v1/session-items/${itemId}/review`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ review_rating: reviewRating }),
     });
     if (!currentRequest(id, revision)) return;
-    saveChoice.value = {item,reviewId:review.id,rating:reviewRating};
+    saveChoice.value = {item,reviewId:review.id,rating:reviewRating,schedule:review.review_schedule};
     const session = practiceSession.value;
     if (session) {
       const original = session.items.find(i=>i.id===itemId);
@@ -180,6 +181,7 @@ onBeforeUnmount(()=>loadRevision++);
         </template>
         <section v-else class="practice-save-choice" aria-label="保存本次回答">
           <p role="status">掌握度已记录：{{ masteryLabel[saveChoice.rating] }}。{{ practiceSession.completed_at?'本次练习已完成，仍可保存这份回答。':'正文已保留，请决定是否保存。' }}</p>
+          <p v-if="saveChoice.schedule?.next_review_at" class="review-next" role="status">下次复习：{{ formatReviewTime(saveChoice.schedule.next_review_at) }} <span class="helper">（按本次掌握度固定间隔安排）</span></p>
           <template v-if="!savedAnswerId"><label class="practice-quality">答案质量评分（可选）<select v-model="qualityRating" aria-label="本次答案质量评分" :disabled="saving"><option :value="null">暂不评分</option><option v-for="n in 5" :key="n" :value="n">{{ n }} 分</option></select></label><p class="helper">质量评分评价这份答案，与上面的四级掌握度独立。</p><div class="action-row"><button class="primary" :disabled="saving || !answerDraft.trim()" @click="saveAnswer">{{ saving?'正在保存…':'保存本次回答' }}</button><button :disabled="saving" @click="loadSession">不保存，{{ practiceSession.completed_at?'结束练习':'继续下一题' }}</button></div></template>
           <template v-else><p class="success-banner">回答 #{{ savedAnswerId }} 已保存，并保留本次练习来源。</p><div class="action-row"><RouterLink :to="`/questions/${saveChoice.item.question_id}`">查看保存回答</RouterLink><button class="primary" @click="loadSession">{{ practiceSession.completed_at?'完成练习':'继续下一题' }}</button></div></template>
         </section>

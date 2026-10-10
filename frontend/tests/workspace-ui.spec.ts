@@ -15,15 +15,15 @@ const q=(id:number,text:string)=>({id,text,topics:[],tags:[],state:{is_favorite:
 const session=(id:number)=>({id,mode:'random',items:[{id:id*10,question_id:id,ordinal:1,status:'shown',question:{id,text:`Session question ${id}`,status:'active',archived_at:null}}],completed_at:null});
 
 describe('professional workspace behaviors',()=>{
-  it('has four semantic navigation links, selected state, local health and a skip link',async()=>{
+  it('has five semantic navigation links, selected state, local health and a skip link',async()=>{
     vi.stubGlobal('fetch',vi.fn(async(input:RequestInfo|URL)=>json(String(input).endsWith('/health')?{status:'ok'}:[])));
     const router=createAppRouter(createMemoryHistory());await router.push('/');await router.isReady();
     const wrapper=mount(App,{global:{plugins:[router]}});await flushPromises();
     expect(wrapper.text()).toContain('Agent Interview Workspace');
     expect(wrapper.find('a[href="#workspace-content"]').exists()).toBe(true);
-    const nav=wrapper.get('nav[aria-label="主导航"]');expect(nav.findAll('a')).toHaveLength(4);
+    const nav=wrapper.get('nav[aria-label="主导航"]');expect(nav.findAll('a')).toHaveLength(5);
     expect(nav.get('a[href="/"]').attributes('aria-current')).toBe('page');
-    expect(nav.findAll('svg[aria-hidden="true"]')).toHaveLength(4);
+    expect(nav.findAll('svg[aria-hidden="true"]')).toHaveLength(5);
     await nav.get('a[href="/practice"]').trigger('click');await flushPromises();
     expect(nav.get('a[href="/practice"]').attributes('aria-current')).toBe('page');
     expect(wrapper.text()).toContain('后端已连接');

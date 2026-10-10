@@ -8,6 +8,8 @@ import type { CanonicalHistory, PracticeReviewItem } from "../api/question-histo
 import QuestionRelationReview from "../components/QuestionRelationReview.vue";
 import QuestionForm from "../components/QuestionForm.vue";
 import TopicTagPicker from "../components/TopicTagPicker.vue";
+import ReviewStatus from "../components/review/ReviewStatus.vue";
+import type { ReviewSchedule } from "../api/progress";
 import SavedAnswersPanel from "../components/answers/SavedAnswersPanel.vue";
 
 interface TaxonomyItem {
@@ -26,7 +28,7 @@ interface QuestionDetail {
   archived_at: string | null;
   topics: Array<TaxonomyItem & { parent_id: number | null; slug: string }>;
   tags: TaxonomyItem[];
-  state: { is_favorite: boolean; is_wrong: boolean; user_note: string | null };
+  state: ReviewSchedule & { is_favorite: boolean; is_wrong: boolean; user_note: string | null };
 }
 
 interface QuestionFormPayload {
@@ -258,6 +260,7 @@ async function correctReview(review: PracticeReviewItem): Promise<void> {
     reviews.value = reviews.value.map((item) => (item.id === reviewId ? updated : item));
     if (history.value) history.value.practice_reviews = reviews.value;
     reviewRatingDrafts.value[updated.id] = updated.review_rating;
+    if (updated.review_schedule) currentQuestion.state = {...currentQuestion.state,...updated.review_schedule};
   } catch (error) {
     if (isCurrentQuestionRequest(requestedQuestionId, requestRevision)) {
       errorMessage.value = displayError(error);
@@ -314,6 +317,7 @@ onBeforeUnmount(() => { questionLoadRevision += 1; historyLoadRevision += 1; });
       </div><p v-if="!readOnly" class="group-scope">取消收藏和取消错题标记作用于整个归并组。</p>
       <p v-if="history && history.member_question_ids.length > 1" class="helper">归并组暂不支持整组归档，原始题目与历史继续保留。</p>
       </article>
+      <ReviewStatus v-if="!isPendingCandidate && !readOnly" :schedule="question.state" />
       <details v-if="!readOnly" class="editor-panel"><summary>编辑题目与分类</summary>
       <QuestionForm
         :initial-text="question.text"

@@ -7,7 +7,7 @@ from .serializers import session_item_json as _item_json, _timestamp
 from app.db import get_session
 from app.errors import ApiError
 from app.repositories.practice import get_practice_session
-from app.services.practice_selector import create_practice_session
+from app.services.practice_selector import create_practice_session, eligible_questions
 from app.services.practice_session import skip_session_item
 
 
@@ -59,3 +59,20 @@ def get_practice_session_by_id(session_id: int):
 def post_skip_session_item(session_item_id: int):
     item, practice_session = skip_session_item(get_session(), session_item_id)
     return jsonify({"item": _item_json(item), "session": _session_json(practice_session)})
+
+
+@blueprint.get("/practice-options")
+def get_practice_options():
+    session = get_session()
+    counts = {mode: len(eligible_questions(session, mode, {}))
+              for mode in ("random", "favorite", "wrong", "due")}
+    return jsonify({"counts": counts})
+
+
+@blueprint.post("/practice-sessions/preview")
+def preview_practice_session():
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict) or set(payload) - {"mode", "filters"}:
+        raise ApiError(400, "VALIDATION_ERROR", "Expected mode and filters")
+    rows = eligible_questions(get_session(), payload.get("mode"), payload.get("filters", {}))
+    return jsonify({"question_count": len(rows)})

@@ -62,7 +62,9 @@ def run_migrations_online() -> None:
             # revision can leave part of its schema behind.
             dbapi_connection.isolation_level = None
             cursor = dbapi_connection.cursor()
-            cursor.execute("PRAGMA foreign_keys=ON")
+            # FK checks must be deferred across SQLite parent-table copies.
+            # This connection is migration-only (NullPool), never an app connection.
+            cursor.execute("PRAGMA foreign_keys=OFF")
             cursor.close()
 
         @event.listens_for(connectable, "begin")
@@ -78,6 +80,10 @@ def run_migrations_online() -> None:
         )
         with context.begin_transaction():
             context.run_migrations()
+            if connection.dialect.name == "sqlite":
+                violations = connection.exec_driver_sql("PRAGMA foreign_key_check").fetchall()
+                if violations:
+                    raise RuntimeError(f"Migration foreign key validation failed: {violations[:5]}")
 
 
 if context.is_offline_mode():

@@ -16,6 +16,21 @@
 
 升级前按既有方式备份本机数据，运行 `alembic upgrade head`。`0005_saved_answers` 增量新增回答表和可选练习关联，不重建旧数据库。此阶段不包含 AI 回答或复习调度。
 
+## Phase 3：练习与复习增强
+
+- 练习设置支持随机、Topic、Tag、收藏、错题与到期复习，并展示实际可练习题数。
+- 收藏按归并组标记聚合；错题包含手动标记或组内最新自评为「不会」的题目。
+- 四级掌握度采用固定间隔：不会 1 天、模糊 2 天、基本会 7 天、熟练 14 天，以原始 `PracticeReview.reviewed_at` 为基准，统一 UTC 存储、按本地时间显示。
+- 更正评价会重算摘要，但保留原 Review ID 和事件时间；归并只重算规范题摘要，不新增或改写历史事件。
+- 到期队列只选择已到期的 active 规范题，按最早到期顺序排列；未复习题不会自动入队。保存回答、答案质量评分、收藏和错题标记不会改变复习日期。
+- 题目详情展示最近练习、最近掌握度和下次复习；练习评分后仍可保存本次回答，包括会话最后一题。
+- 「学习进度」分别展示掌握度次数、当前到期题、Topic 覆盖和回答质量分布。弱项默认统计最近 30 天，可切换 7/90 天；少于 3 次自评显示「练习记录不足」，不进行弱项排序。每个历史事件只计一次，Topic 使用规范题当前分类。
+- 进度中的掌握度总次数包含全部历史事件；有效题、覆盖、收藏、错题、到期和回答数量限定当前有效题库。回答统计仅包含未归档回答的当前版本。
+
+升级仍使用 `cd backend && alembic upgrade head`。`0006_phase3_review_schedule` 在 0005 上新增摘要字段并回填既有 Review，同时安全复制 PracticeSession 以扩展 SQLite CHECK；旧 SessionItem、Review、回答来源和 FTS 保留。迁移有事务及外键验证，失败会回滚；运行前按既有方式备份本机数据。当前不包含自适应复习算法或 AI 自动评分。
+
+新增 API：`GET /api/v1/progress?window_days=30`、`GET /api/v1/practice-options`、`POST /api/v1/practice-sessions/preview`（mode、filters）；原创建练习接口接受六种模式。新会话 `selector_version=v2`，旧会话固定顺序不改变。
+
 ## 开发环境
 
 当前仓库按 `AGENTS.md` 使用已有 Conda 环境 `test` 开发；Conda 是本机开发约定，不是产品运行要求。若当前 zsh 尚未载入 Conda hook，只在当前终端载入：
@@ -171,7 +186,7 @@ npm --prefix frontend test
 npm --prefix frontend run build
 ```
 
-当前实现范围是 Phase 0 + Phase 1A + Phase 1B，以及 Phase 1C 的规则相似题审核和人工 Canonical Merge。Phase 1B 不包含 VLM/LLM 自动提题或分类、自动语义归并、SavedAnswer、Project/Resume/Material、LLM 参考答案、模拟面试、语音/视频、多 Agent 或社交平台自动采集。
+当前实现范围是 Phase 0–3：题库、OCR、规则相似题审核与人工 Canonical Merge、保存回答和固定间隔复习。Phase 1B 不包含 VLM/LLM 自动提题或分类、自动语义归并、SavedAnswer、Project/Resume/Material、LLM 参考答案、模拟面试、语音/视频、多 Agent 或社交平台自动采集。
 
 
 ## 相似题审核与规范题归并（Phase 1C）
@@ -186,4 +201,4 @@ npm --prefix frontend run build
 - 搜索子题原文只显示规范题，分类按规范题最终选择筛选；新练习只选规范题，旧练习可以继续完成。
 - 「合并 OCR 候选区域」用于整理同一截图的候选边界，与跨题目的「归并为规范题」不同。
 
-可选 LLM/VLM 建议、自动归并、SavedAnswer 和多用户功能尚未实现。
+可选 LLM/VLM 建议、自动归并和多用户功能尚未实现。

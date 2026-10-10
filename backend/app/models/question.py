@@ -287,6 +287,9 @@ class QuestionState(Base):
     is_wrong: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=False, server_default=text("0")
     )
+    last_reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_review_rating: Mapped[str | None] = mapped_column(String(24))
+    next_review_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
     user_note: Mapped[str | None] = mapped_column(Text, nullable=True)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
