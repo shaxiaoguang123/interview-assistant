@@ -1,0 +1,16 @@
+<script setup lang="ts">
+import { ref,shallowRef,watch,onBeforeUnmount } from 'vue';
+import { ApiError } from '../../api/client';
+import { getAssistantOutputs,saveOutputAnswer,type AssistantOutput,type SaveAssistantResult } from '../../api/assistant';
+import SourceCitations from './SourceCitations.vue';
+const props=defineProps<{questionId:number;refreshKey?:number;readOnly?:boolean}>();const emit=defineEmits<{saved:[result:SaveAssistantResult]}>();
+const rows=ref<AssistantOutput[]>([]),error=shallowRef(''),busy=shallowRef(false),opened=shallowRef<number|null>(null),draft=shallowRef('');let revision=0;
+async function load(){const r=++revision;error.value='';try{const result=await getAssistantOutputs(props.questionId);if(r===revision)rows.value=Array.isArray(result)?result:[];}catch(e){if(r===revision)error.value=e instanceof ApiError?e.message:'AI 历史加载失败。';}}
+function organize(row:AssistantOutput){opened.value=row.id;draft.value=row.content;}
+async function save(row:AssistantOutput){const r=revision;busy.value=true;error.value='';try{const result=await saveOutputAnswer(row.id,{save_kind:'new_answer',content:draft.value});if(r===revision){opened.value=null;emit('saved',result);}}catch(e){if(r===revision)error.value=e instanceof ApiError?e.message:'保存失败，编辑正文已保留。';}finally{if(r===revision)busy.value=false;}}
+watch([()=>props.questionId,()=>props.refreshKey],()=>{rows.value=[];opened.value=null;void load();},{immediate:true});onBeforeUnmount(()=>revision++);
+</script>
+<template><section class="assistant-history" aria-label="已保存 AI 输出"><h3>已保存参考答案与分析 <span class="muted">{{ rows.length }}</span></h3><p class="helper">只显示明确保存的输出。历史来源固定在生成时的版本，不随资料修改变化。</p><p v-if="error" role="alert">{{ error }} <button @click="load">重新加载</button></p><p v-if="!rows.length&&!error" class="helper">暂无保存的 AI 输出，未保存的预览不会进入历史。</p><details v-for="row in rows" :key="row.id" class="assistant-history-row"><summary>{{ {reference_answer:'参考答案',polish:'润色结果',analyze:'分析建议'}[row.output_type] }} · #{{ row.id }} · {{ row.model }} <small class="muted">原题 #{{ row.question_id }} · {{ new Date(row.created_at).toLocaleDateString('zh-CN') }}</small></summary><p class="output-content">{{ row.content }}</p><SourceCitations :sources="row.sources"/><button v-if="row.output_type!=='analyze'&&!readOnly" :disabled="busy" @click="organize(row)">整理并保存为回答</button><form v-if="opened===row.id" @submit.prevent="save(row)"><label>整理后的回答<textarea v-model="draft" aria-label="历史 AI 输出编辑正文" maxlength="100000" :disabled="busy"/></label><div class="action-row"><button type="submit" :disabled="busy||!draft.trim()">保存为新回答</button><button type="button" :disabled="busy" @click="opened=null">取消</button></div></form></details></section></template>
+<style scoped>
+.assistant-history{margin:24px 0;padding:24px;border:1px solid var(--border);border-radius:12px;background:var(--surface);}.assistant-history-row{border-top:1px solid var(--border);padding:8px 0;}.assistant-history-row small{margin-left:8px;}.output-content{white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.85;}.assistant-history-row form{display:grid;gap:16px;margin-top:20px;background:var(--brand-soft);padding:16px;border-radius:8px;}@media(max-width:767px){.assistant-history{padding:16px;}.assistant-history-row small{display:block;margin:4px 0;}}
+</style>

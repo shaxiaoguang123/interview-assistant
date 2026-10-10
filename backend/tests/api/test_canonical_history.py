@@ -232,7 +232,7 @@ def test_plain_empty_and_archived_history_remain_readable(client,group):
     assert client.post(f'/api/v1/questions/{qid}/archive').status_code==200
     history=client.get(f'/api/v1/questions/{qid}/history').get_json()
     assert history == {'canonical_question_id':qid,'member_question_ids':[qid],
-                       'sources':[],'practice_reviews':[],'session_items':[], 'saved_answers':[]}
+                       'sources':[],'practice_reviews':[],'session_items':[], 'saved_answers':[], 'assistant_outputs':[]}
     assert qid not in [q['id'] for q in client.get('/api/v1/questions').get_json()]
     assert qid in [q['id'] for q in client.get('/api/v1/questions?include_archived=true').get_json()]
 

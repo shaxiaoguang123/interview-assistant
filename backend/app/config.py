@@ -75,4 +75,9 @@ class Config:
         )
     ).expanduser()
     OCR_ADAPTER_FACTORY = None
+    LLM_BASE_URL = os.environ.get("LLM_BASE_URL", "")
+    LLM_API_KEY = os.environ.get("LLM_API_KEY", "")
+    LLM_MODEL = os.environ.get("LLM_MODEL", "")
+    LLM_TIMEOUT_SECONDS = 60
+    LLM_PROVIDER_FACTORY = None
     DEBUG = os.environ.get("APP_DEBUG", "").strip().lower() in {"1", "true", "yes"}

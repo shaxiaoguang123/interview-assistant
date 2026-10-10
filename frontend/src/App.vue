@@ -12,6 +12,9 @@ const navigation = [
   {to:"/taxonomy",label:"分类管理",icon:"taxonomy",hint:"Topic 与 Tag"},
   {to:"/practice",label:"练习",icon:"practice",hint:"组织与表达"},
   {to:"/progress",label:"学习进度",icon:"progress",hint:"复习与薄弱知识点"},
+  {to:"/projects",label:"项目经历",icon:"projects",hint:"事实与版本"},
+  {to:"/materials",label:"资料库",icon:"materials",hint:"文档与上下文"},
+  {to:"/settings",label:"模型设置",icon:"settings",hint:"Provider 连接"},
 ] as const;
 const activePath = computed(() => route.path.startsWith('/questions') ? '/' : navigation.find(n => n.to !== '/' && route.path.startsWith(n.to))?.to ?? '/');
 const healthLabel = computed(() => healthStatus.value === 'ok' ? '后端已连接' : healthStatus.value === 'checking' ? '正在检查连接' : '后端暂不可用');

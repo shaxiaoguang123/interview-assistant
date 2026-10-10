@@ -10,6 +10,8 @@ import QuestionForm from "../components/QuestionForm.vue";
 import TopicTagPicker from "../components/TopicTagPicker.vue";
 import ReviewStatus from "../components/review/ReviewStatus.vue";
 import type { ReviewSchedule } from "../api/progress";
+import AssistantPanel from "../components/assistant/AssistantPanel.vue";
+import AssistantHistory from "../components/assistant/AssistantHistory.vue";
 import SavedAnswersPanel from "../components/answers/SavedAnswersPanel.vue";
 
 interface TaxonomyItem {
@@ -41,6 +43,8 @@ interface QuestionFormPayload {
 
 const route = useRoute();
 const router = useRouter();
+const answerRefresh = ref(0);
+const assistantRefresh = ref(0);
 const mergeSuccess = ref<MergeOutcome | null>(null);
 const question = ref<QuestionDetail | null>(null);
 const reviews = ref<PracticeReviewItem[]>([]);
@@ -336,7 +340,9 @@ onBeforeUnmount(() => { questionLoadRevision += 1; historyLoadRevision += 1; });
         :text="question.text"
         @merged="onMerged"
       />
-      <SavedAnswersPanel v-if="!isPendingCandidate" :key="question.id" :question-id="question.id" :question-text="question.text" :read-only="readOnly" />
+      <AssistantPanel v-if="!readOnly && !question.archived_at" :key="`ai:${question.id}`" :question-id="question.id" @saved="()=>{answerRefresh++;assistantRefresh++;}" />
+      <AssistantHistory v-if="!isPendingCandidate" :key="`ai-history:${question.id}`" :question-id="question.id" :refresh-key="assistantRefresh" :read-only="readOnly" @saved="answerRefresh++" />
+      <SavedAnswersPanel v-if="!isPendingCandidate" :key="`${question.id}:${answerRefresh}`" :question-id="question.id" :question-text="question.text" :read-only="readOnly" @changed="assistantRefresh++" />
       <section aria-label="归并组历史" class="group-history">
         <p v-if="historyLoading" role="status">正在加载题目历史…</p>
         <template v-else-if="historyLoadError">

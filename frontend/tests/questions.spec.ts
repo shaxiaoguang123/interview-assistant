@@ -77,7 +77,7 @@ function questionFetchMock(
   reviewRows: Record<number, ReviewFixture[]> = {},
 ): typeof fetch {
   return vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-    const path = String(input);if (/\/questions\/\d+\/saved-answers$/.test(path)) return {ok:true,status:200,json:async()=>[]} as Response;
+    const path = String(input);if (/\/questions\/\d+\/(saved-answers|assistant-outputs)$/.test(path)) return {ok:true,status:200,json:async()=>[]} as Response;
     const similar = emptySimilarityResponse(path);
     if (similar) return similar;
     const custom = override(path, init);
@@ -119,7 +119,7 @@ describe("manual question bank", () => {
     const Page = pageModule!.default;
     const match = makeQuestion(11, "MCP 通信协议如何工作？");
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
-      const path = String(input);if (/\/questions\/\d+\/saved-answers$/.test(path)) return {ok:true,status:200,json:async()=>[]} as Response;
+      const path = String(input);if (/\/questions\/\d+\/(saved-answers|assistant-outputs)$/.test(path)) return {ok:true,status:200,json:async()=>[]} as Response;
       const similar = emptySimilarityResponse(path);
       if (similar) return similar;
       if (path === "/api/v1/topics" || path === "/api/v1/tags") {
@@ -155,7 +155,7 @@ describe("manual question bank", () => {
     let created = makeQuestion(7, "What is RAG?");
     let archived = false;
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-      const path = String(input);if (/\/questions\/\d+\/saved-answers$/.test(path)) return {ok:true,status:200,json:async()=>[]} as Response;
+      const path = String(input);if (/\/questions\/\d+\/(saved-answers|assistant-outputs)$/.test(path)) return {ok:true,status:200,json:async()=>[]} as Response;
       const similar = emptySimilarityResponse(path);
       if (similar) return similar;
       const method = init?.method ?? "GET";
@@ -241,7 +241,7 @@ describe("manual question bank", () => {
     expect(pageModule, "missing feature: QuestionBankPage.vue").toBeDefined();
     const Page = pageModule!.default;
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-      const path = String(input);if (/\/questions\/\d+\/saved-answers$/.test(path)) return {ok:true,status:200,json:async()=>[]} as Response;
+      const path = String(input);if (/\/questions\/\d+\/(saved-answers|assistant-outputs)$/.test(path)) return {ok:true,status:200,json:async()=>[]} as Response;
       const similar = emptySimilarityResponse(path);
       if (similar) return similar;
       if (path === "/api/v1/topics" || path === "/api/v1/tags") {
@@ -286,7 +286,7 @@ describe("manual question bank", () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-        const path = String(input);if (/\/questions\/\d+\/saved-answers$/.test(path)) return {ok:true,status:200,json:async()=>[]} as Response;
+        const path = String(input);if (/\/questions\/\d+\/(saved-answers|assistant-outputs)$/.test(path)) return {ok:true,status:200,json:async()=>[]} as Response;
         const similar = emptySimilarityResponse(path);
         if (similar) return similar;
         if (path === "/api/v1/questions/1" && (init?.method ?? "GET") === "GET") {
@@ -333,7 +333,7 @@ describe("manual question bank", () => {
     let question = makeQuestion(1, "Question that can be corrected");
     let patchCount = 0;
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-      const path = String(input);if (/\/questions\/\d+\/saved-answers$/.test(path)) return {ok:true,status:200,json:async()=>[]} as Response;
+      const path = String(input);if (/\/questions\/\d+\/(saved-answers|assistant-outputs)$/.test(path)) return {ok:true,status:200,json:async()=>[]} as Response;
       const similar = emptySimilarityResponse(path);
       if (similar) return similar;
       if (path === "/api/v1/questions/1" && (init?.method ?? "GET") === "GET") {
@@ -395,7 +395,7 @@ describe("manual question bank", () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(async (input: RequestInfo | URL) => {
-        const path = String(input);if (/\/questions\/\d+\/saved-answers$/.test(path)) return {ok:true,status:200,json:async()=>[]} as Response;
+        const path = String(input);if (/\/questions\/\d+\/(saved-answers|assistant-outputs)$/.test(path)) return {ok:true,status:200,json:async()=>[]} as Response;
         const similar = emptySimilarityResponse(path);
         if (similar) return similar;
         if (path === "/api/v1/questions/1") {
@@ -495,7 +495,7 @@ describe("manual question bank", () => {
       },
     ];
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
-      const path = String(input);if (/\/questions\/\d+\/saved-answers$/.test(path)) return {ok:true,status:200,json:async()=>[]} as Response;
+      const path = String(input);if (/\/questions\/\d+\/(saved-answers|assistant-outputs)$/.test(path)) return {ok:true,status:200,json:async()=>[]} as Response;
       const similar = emptySimilarityResponse(path);
       if (similar) return similar;
       if (path === "/api/v1/questions/1") {
@@ -563,7 +563,7 @@ describe("manual question bank", () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(async (input: RequestInfo | URL) => {
-        const path = String(input);if (/\/questions\/\d+\/saved-answers$/.test(path)) return {ok:true,status:200,json:async()=>[]} as Response;
+        const path = String(input);if (/\/questions\/\d+\/(saved-answers|assistant-outputs)$/.test(path)) return {ok:true,status:200,json:async()=>[]} as Response;
         const similar = emptySimilarityResponse(path);
         if (similar) return similar;
         if (path === "/api/v1/questions/1") {
@@ -614,7 +614,7 @@ describe("manual question bank", () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(async (input: RequestInfo | URL) => {
-        const path = String(input);if (/\/questions\/\d+\/saved-answers$/.test(path)) return {ok:true,status:200,json:async()=>[]} as Response;
+        const path = String(input);if (/\/questions\/\d+\/(saved-answers|assistant-outputs)$/.test(path)) return {ok:true,status:200,json:async()=>[]} as Response;
         const similar = emptySimilarityResponse(path);
         if (similar) return similar;
         if (path === "/api/v1/questions/1") {
@@ -666,7 +666,7 @@ describe("manual question bank", () => {
       display_image_url: `/api/v1/sources/${sourceId}/display`,
     }];
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
-      const path = String(input);if (/\/questions\/\d+\/saved-answers$/.test(path)) return {ok:true,status:200,json:async()=>[]} as Response;
+      const path = String(input);if (/\/questions\/\d+\/(saved-answers|assistant-outputs)$/.test(path)) return {ok:true,status:200,json:async()=>[]} as Response;
       const similar = emptySimilarityResponse(path);
       if (similar) return similar;
       const questionMatch = path.match(/^\/api\/v1\/questions\/(\d+)(?:\/([^/]+))?$/);
