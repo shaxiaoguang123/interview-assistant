@@ -12,6 +12,7 @@ const emit = defineEmits<{
 const selectedSourceId = ref<number | null>(null);
 const selectedSource = computed(() => props.history.sources.find(s => s.question_source_id === selectedSourceId.value) ?? props.history.sources[0] ?? null);
 const ratingLabels = {dont_know:"不会",vague:"模糊",basic:"基本会",proficient:"熟练"};
+function formatTime(value:string) { const date=new Date(value);return Number.isNaN(date.getTime()) ? value : new Intl.DateTimeFormat('zh-CN',{dateStyle:'medium',timeStyle:'short'}).format(date); }
 const itemLabels = {shown:"待练习",completed:"已完成",skipped:"已跳过"};
 function changeRating(id: number, event: Event) {
   emit("rating-change", id, (event.target as HTMLSelectElement).value as ReviewRating);
@@ -51,7 +52,7 @@ watch(() => props.history.sources, sources => {
         <p v-if="!history.practice_reviews.length" class="empty-state">暂无练习记录</p>
         <ol v-else aria-label="练习历史" class="history-list">
           <li v-for="review in history.practice_reviews" :key="review.id" :data-review-id="review.id">
-            <div class="record-meta"><span class="badge">原题 #{{ review.question_id }}</span><time :datetime="review.reviewed_at">{{ review.reviewed_at }}</time></div>
+            <div class="record-meta"><span class="badge">原题 #{{ review.question_id }}</span><time :datetime="review.reviewed_at">{{ formatTime(review.reviewed_at) }}</time></div>
             <span class="rating-label">{{ ratingLabels[review.review_rating] }}</span>
             <div class="action-row">
               <select :value="ratingDrafts[review.id]" :aria-label="`更正掌握度 ${review.id}`" @change="changeRating(review.id, $event)">

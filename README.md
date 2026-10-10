@@ -159,4 +159,19 @@ npm --prefix frontend test
 npm --prefix frontend run build
 ```
 
-当前实现范围是 Phase 0 + Phase 1A + Phase 1B 的本机截图采集/OCR/候选复核。Phase 1B 不包含 VLM/LLM 自动提题或分类、跨来源语义去重、SavedAnswer、Project/Resume/Material、LLM 参考答案、模拟面试、语音/视频、多 Agent 或社交平台自动采集。
+当前实现范围是 Phase 0 + Phase 1A + Phase 1B，以及 Phase 1C 的规则相似题审核和人工 Canonical Merge。Phase 1B 不包含 VLM/LLM 自动提题或分类、自动语义归并、SavedAnswer、Project/Resume/Material、LLM 参考答案、模拟面试、语音/视频、多 Agent 或社交平台自动采集。
+
+
+## 相似题审核与规范题归并（Phase 1C）
+
+在题目详情或截图收件箱审核相似题。规则只提供建议：选择「确认为同题并归并」后才保存人工同题结论，并进入只读预览。
+
+- 正式题可以选择任意一方作为规范题；OCR 待审核候选始终归并至已有正式题。
+- 核对双方原文、原始 ID、来源/练习历史与分类。默认分类并集，停用分类可保留或移除。
+- 只有点击「确认归并」才提交 canonical 指针。取消保留同题结论，可稍后继续或重新分类；候选在真正归并前仍待审核。
+- 预览过期返回 409 时重新获取预览，再次核对分类并确认，界面不会自动重试旧 token。
+- 原始 QuestionSource、OCRBlock、SessionItem、PracticeReview ID 保持不变。子题旧 URL 转至规范题，规范题提示可打开原始只读正文与聚合历史。
+- 搜索子题原文只显示规范题，分类按规范题最终选择筛选；新练习只选规范题，旧练习可以继续完成。
+- 「合并 OCR 候选区域」用于整理同一截图的候选边界，与跨题目的「归并为规范题」不同。
+
+可选 LLM/VLM 建议、自动归并、SavedAnswer 和多用户功能尚未实现。

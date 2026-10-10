@@ -217,14 +217,14 @@ Do not touch the original worktree’s uncommitted frontend/tests/inbox.spec.ts.
 - Modify frontend/src/components/QuestionRelationReview.vue, frontend/src/pages/InboxPage.vue, frontend/src/pages/QuestionDetailPage.vue and frontend/src/pages/QuestionBankPage.vue.
 - Test frontend/tests/inbox.spec.ts and frontend/tests/questions.spec.ts.
 
-- [ ] Add failing Vitest for similar-candidate display, explicit relation choice, no dead-end OCR review states, accepted-same candidate staying pending until Merge, preview token refresh after a 409, previewed canonical root, Topic/Tag union, inactive taxonomy warning, no writes before final confirmation, pending OCR candidate merge becoming read-only history, aggregate source/review history retaining original IDs, and route redirection from a merged child.
-- [ ] Add failing QuestionDetailPage tests proving it calls the grouped history API once, maps its full source rows into SourceImageViewer, maps PracticeReview rows into existing controls, does not make duplicate exact-history requests, and preserves the original question_id after a review PATCH. Task 5 backend tests own compatibility assertions for the legacy exact-question APIs.
-- [ ] Add failing UI tests for merged-child direct navigation and refusal of edit/archive controls; show a link/redirect to the canonical root rather than applying the child write to that root.
-- [ ] Run questions.spec.ts and inbox.spec.ts to prove RED.
-- [ ] Implement the review panel and merge dialog by reusing current page/API patterns; preserve SourceImageViewer and candidate expected_revision flow.
-- [ ] Verify retryable errors, stale preview conflicts, and job/question navigation cannot apply a stale relation/preview response to another selected Question or Job.
-- [ ] Run frontend Vitest, npm run type-check, npm run build, backend Pytest and pip check after the full workflow is integrated.
-- [ ] Perform browser acceptance with a temporary database and synthetic screenshot: import, review a duplicate, merge it, open canonical history, search, and start a new PracticeSession; verify no child appears in new results and existing SessionItems remain intact.
+- [x] Add failing Vitest for similar-candidate display, explicit relation choice, no dead-end OCR review states, accepted-same candidate staying pending until Merge, preview token refresh after a 409, previewed canonical root, Topic/Tag union, inactive taxonomy warning, no writes before final confirmation, pending OCR candidate merge becoming read-only history, aggregate source/review history retaining original IDs, and route redirection from a merged child.
+- [x] Add failing QuestionDetailPage tests proving it calls the grouped history API once, maps its full source rows into SourceImageViewer, maps PracticeReview rows into existing controls, does not make duplicate exact-history requests, and preserves the original question_id after a review PATCH. Task 5 backend tests own compatibility assertions for the legacy exact-question APIs.
+- [x] Add failing UI tests for merged-child direct navigation and refusal of edit/archive controls; show a link/redirect to the canonical root rather than applying the child write to that root.
+- [x] Run questions.spec.ts and inbox.spec.ts to prove RED.
+- [x] Implement the review panel and merge dialog by reusing current page/API patterns; preserve SourceImageViewer and candidate expected_revision flow.
+- [x] Verify retryable errors, stale preview conflicts, and job/question navigation cannot apply a stale relation/preview response to another selected Question or Job.
+- [x] Run frontend Vitest, npm run type-check, npm run build, backend Pytest and pip check after the full workflow is integrated.
+- [x] Perform browser acceptance with a temporary database and synthetic screenshot: import, review a duplicate, merge it, open canonical history, search, and start a new PracticeSession; verify no child appears in new results and existing SessionItems remain intact.
 
 ## Phase 1C-3 Optional Suggestion Gate
 

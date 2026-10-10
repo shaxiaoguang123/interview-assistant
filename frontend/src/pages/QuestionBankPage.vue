@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, ref } from "vue";
+import { computed, onMounted, ref } from "vue";
 import { RouterLink } from "vue-router";
 import { ApiError, request } from "../api/client";
 import QuestionForm from "../components/QuestionForm.vue";
@@ -35,6 +35,8 @@ const errorMessage = ref("");
 const loading = ref(false);
 const showForm = ref(false);
 let questionListRevision = 0;
+const filterCount = computed(() => selectedTopicIds.value.length + selectedTagIds.value.length + Number(includeArchived.value) + Number(favoriteOnly.value) + Number(wrongOnly.value));
+function clearFilters() {searchQuery.value='';selectedTopicIds.value=[];selectedTagIds.value=[];includeArchived.value=false;favoriteOnly.value=false;wrongOnly.value=false;void loadQuestions();}
 
 function displayError(error: unknown): string {
   if (error instanceof ApiError) {
@@ -132,11 +134,11 @@ onMounted(reloadWorkspace);
       <input v-model="searchQuery" aria-label="搜索题目" placeholder="搜索题干、技术概念或归并前的历史正文…" type="search" />
       <button type="submit" aria-label="搜索题库">搜索</button>
     </form>
-    <details class="filter-panel"><summary>筛选题库 <span class="muted">· Topic、Tag、收藏与错题</span></summary>
+    <details class="filter-panel"><summary>筛选题库 <span v-if="filterCount" class="badge accent">{{ filterCount }}</span> <span class="muted">· Topic、Tag、收藏与错题</span></summary>
       <div aria-label="题库筛选" class="filter-grid">
         <label>Topic<select v-model="selectedTopicIds" multiple aria-label="按 Topic 筛选"><option v-for="topic in topics.filter(item => item.is_active)" :key="topic.id" :value="topic.id">{{ topic.name }}</option></select><small class="helper">按 Ctrl / ⌘ 可选择多个分类</small></label>
         <label>Tag<select v-model="selectedTagIds" multiple aria-label="按 Tag 筛选"><option v-for="tag in tags.filter(item => item.is_active)" :key="tag.id" :value="tag.id">{{ tag.name }}</option></select><small class="helper">分类以规范题最终选择为准</small></label>
-        <div class="filter-toggles"><label><input v-model="includeArchived" type="checkbox" aria-label="显示归档题目" />显示归档题目</label><label><input v-model="favoriteOnly" type="checkbox" aria-label="仅显示收藏题目" />仅收藏</label><label><input v-model="wrongOnly" type="checkbox" aria-label="仅显示错题" />仅错题</label><button type="button" @click="loadQuestions">筛选</button></div>
+        <div class="filter-toggles"><label><input v-model="includeArchived" type="checkbox" aria-label="显示归档题目" />显示归档题目</label><label><input v-model="favoriteOnly" type="checkbox" aria-label="仅显示收藏题目" />仅收藏</label><label><input v-model="wrongOnly" type="checkbox" aria-label="仅显示错题" />仅错题</label><div class="action-row"><button type="button" @click="loadQuestions">筛选</button><button type="button" @click="clearFilters">清空条件</button></div></div>
       </div>
     </details>
     <p v-if="loading" role="status">正在加载题目…</p>
@@ -146,7 +148,7 @@ onMounted(reloadWorkspace);
       <ul v-else aria-label="题目列表" class="question-list">
         <li v-for="question in questions" :key="question.id" class="question-row">
           <div class="question-row-content"><RouterLink :to="`/questions/${question.id}`" class="question-title">{{ question.text }}</RouterLink>
-            <div class="question-row-meta"><span class="mono">#{{ question.id }}</span><span v-if="question.archived_at" class="badge">已归档</span>
+            <div class="question-row-meta"><span class="mono">#{{ question.id }}</span><span v-if="(question.canonical_member_count ?? 1) > 1" class="badge accent">规范题 · {{ question.canonical_member_count }} 道原题</span><span v-if="question.archived_at" class="badge">已归档</span>
               <span v-for="topic in question.topics" :key="`topic-${topic.id}`" class="badge accent">{{ topic.name }}<template v-if="!topic.is_active">（停用）</template></span>
               <span v-for="tag in question.tags" :key="`tag-${tag.id}`" class="badge">{{ tag.name }}<template v-if="!tag.is_active">（停用）</template></span>
               <span v-if="question.state.is_favorite" class="badge success">已收藏</span><span v-if="question.state.is_wrong" class="badge warning">错题</span>
