@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, reactive, ref } from "vue";
+import { computed, onMounted, reactive, ref } from "vue";
 import { ApiError, request } from "../api/client";
 
 interface TopicItem {
@@ -27,6 +27,19 @@ const newTopicName = ref("");
 const newTopicParent = ref("");
 const newTagName = ref("");
 const errorMessage = ref("");
+const loading = ref(true);
+const orderedTopics = computed(() => {
+  const result: TopicItem[] = [];
+  const visited = new Set<number>();
+  function visit(topic: TopicItem) {
+    if (visited.has(topic.id)) return;
+    visited.add(topic.id); result.push(topic);
+    topics.value.filter(item => item.parent_id === topic.id).forEach(visit);
+  }
+  topics.value.filter(item => item.parent_id === null).forEach(visit);
+  topics.value.forEach(visit);
+  return result;
+});
 
 function errorText(error: unknown): string {
   if (error instanceof ApiError) {
@@ -37,6 +50,8 @@ function errorText(error: unknown): string {
 }
 
 async function loadTaxonomy(): Promise<void> {
+  loading.value = true;
+  errorMessage.value = "";
   try {
     const [topicRows, tagRows] = await Promise.all([
       request<TopicItem[]>("/api/v1/topics"),
@@ -51,6 +66,8 @@ async function loadTaxonomy(): Promise<void> {
     for (const tag of tagRows) tagNameDrafts[tag.id] = tag.name;
   } catch (error) {
     errorMessage.value = errorText(error);
+  } finally {
+    loading.value = false;
   }
 }
 
@@ -177,10 +194,12 @@ onMounted(loadTaxonomy);
 
 <template>
   <section aria-labelledby="taxonomy-title">
-    <h2 id="taxonomy-title">Agent Topic 与标签</h2>
+    <header class="page-heading"><div><span class="eyebrow">Knowledge structure</span><h2 id="taxonomy-title">Agent Topic 与标签</h2><p>用 Topic 组织知识层级，用 Tag 连接横向技术概念。</p></div></header>
+    <p v-if="loading" role="status">正在加载分类…</p>
     <p v-if="errorMessage" role="alert">{{ errorMessage }}</p>
+    <button v-if="errorMessage" type="button" @click="loadTaxonomy">重新加载分类</button>
 
-    <section aria-labelledby="topics-title">
+    <div class="taxonomy-workspace"><section aria-labelledby="topics-title" class="panel">
       <h3 id="topics-title">Topic</h3>
       <form aria-label="新建 Topic 表单" @submit.prevent="createTopic">
         <label>
@@ -202,30 +221,22 @@ onMounted(loadTaxonomy);
         </label>
         <button type="submit">添加 Topic</button>
       </form>
-      <ul>
+      <ul class="taxonomy-list">
         <li
-          v-for="topic in topics"
+          v-for="topic in orderedTopics"
           :key="topic.id"
-          :style="{ marginInlineStart: `${topicDepth(topic) * 16}px` }"
+          :style="{ marginInlineStart: `${Math.min(topicDepth(topic), 3) * 16}px` }"
         >
-          <input v-model="topicNameDrafts[topic.id]" :aria-label="`Topic 名称 ${topic.slug}`" />
-          <span>{{ topic.slug }}</span>
-          <span v-if="!topic.is_active">停用</span>
-          <select v-model="topicParentDrafts[topic.id]" :aria-label="`Topic 父级 ${topic.slug}`">
-            <option value="">无父级</option>
-            <option v-for="parent in topics" :key="parent.id" :value="String(parent.id)" :disabled="parent.id === topic.id">
-              {{ parent.name }}<template v-if="!parent.is_active">（停用）</template>
-            </option>
-          </select>
-          <button type="button" :aria-label="`保存 Topic ${topic.slug}`" @click="saveTopic(topic)">保存 Topic</button>
-          <button type="button" @click="toggleTopic(topic)">
-            {{ topic.is_active ? "停用 Topic" : "启用 Topic" }}
-          </button>
+          <details class="taxonomy-editor"><summary><span>{{ topic.name }}</span><span class="badge" :class="topic.is_active ? 'success' : 'warning'">{{ topic.is_active ? "启用中" : "停用" }}</span><span class="mono">{{ topic.slug }}</span></summary>
+          <div class="taxonomy-row-edit"><label>名称<input v-model="topicNameDrafts[topic.id]" :aria-label="`Topic 名称 ${topic.slug}`" /></label>
+          <label>父级 Topic<select v-model="topicParentDrafts[topic.id]" :aria-label="`Topic 父级 ${topic.slug}`"><option value="">无父级</option><option v-for="parent in topics" :key="parent.id" :value="String(parent.id)" :disabled="parent.id === topic.id">{{ parent.name }}<template v-if="!parent.is_active">（停用）</template></option></select></label>
+          <div class="action-row"><button type="button" :aria-label="`保存 Topic ${topic.slug}`" @click="saveTopic(topic)">保存 Topic</button><button type="button" @click="toggleTopic(topic)">{{ topic.is_active ? "停用 Topic" : "启用 Topic" }}</button></div>
+          </div></details>
         </li>
       </ul>
     </section>
 
-    <section aria-labelledby="tags-title">
+    <section aria-labelledby="tags-title" class="panel">
       <h3 id="tags-title">Tag</h3>
       <form aria-label="新建标签表单" @submit.prevent="createTag">
         <label>
@@ -234,17 +245,13 @@ onMounted(loadTaxonomy);
         </label>
         <button type="submit">添加标签</button>
       </form>
-      <ul>
+      <ul class="taxonomy-list">
         <li v-for="tag in tags" :key="tag.id">
-          <input v-model="tagNameDrafts[tag.id]" :aria-label="`标签名称 ${tag.id}`" />
-          <span>{{ tag.name }}</span>
-          <span v-if="!tag.is_active">停用</span>
-          <button type="button" @click="saveTag(tag)">保存标签</button>
-          <button type="button" @click="toggleTag(tag)">
-            {{ tag.is_active ? "停用标签" : "启用标签" }}
-          </button>
+          <details class="taxonomy-editor"><summary><span>{{ tag.name }}</span><span class="badge" :class="tag.is_active ? 'success' : 'warning'">{{ tag.is_active ? "启用中" : "停用" }}</span></summary><div class="taxonomy-row-edit">
+          <label>标签名称<input v-model="tagNameDrafts[tag.id]" :aria-label="`标签名称 ${tag.id}`" /></label><div class="action-row"><button type="button" @click="saveTag(tag)">保存标签</button><button type="button" @click="toggleTag(tag)">{{ tag.is_active ? "停用标签" : "启用标签" }}</button></div>
+          </div></details>
         </li>
       </ul>
-    </section>
+    </section></div>
   </section>
 </template>

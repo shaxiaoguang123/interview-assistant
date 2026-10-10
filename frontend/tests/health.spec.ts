@@ -23,7 +23,7 @@ describe("local app shell", () => {
     await router.isReady();
     await flushPromises();
 
-    expect(wrapper.text()).toContain("Agent Interview Assistant");
-    expect(wrapper.text()).toContain("ok");
+    expect(wrapper.text()).toContain("Agent Interview Workspace");
+    expect(wrapper.text()).toContain("后端已连接");
   });
 });

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from flask import Blueprint, jsonify, request
 
+from .serializers import session_item_json as _item_json, _timestamp
+
 from app.db import get_session
 from app.errors import ApiError
 from app.repositories.practice import get_practice_session
@@ -10,30 +12,6 @@ from app.services.practice_session import skip_session_item
 
 
 blueprint = Blueprint("practice_sessions_v1", __name__, url_prefix="/api/v1")
-
-
-def _timestamp(value):
-    return value.isoformat() if value is not None else None
-
-
-def _item_json(item):
-    question = item.question
-    return {
-        "id": item.id,
-        "session_id": item.session_id,
-        "question_id": item.question_id,
-        "ordinal": item.ordinal,
-        "status": item.status,
-        "selection_reason": item.selection_reason,
-        "viewed_at": _timestamp(item.viewed_at),
-        "completed_at": _timestamp(item.completed_at),
-        "question": {
-            "id": question.id,
-            "text": question.text,
-            "status": question.status,
-            "archived_at": _timestamp(question.archived_at),
-        },
-    }
 
 
 def _session_json(practice_session):

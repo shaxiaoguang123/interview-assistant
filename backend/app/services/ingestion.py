@@ -25,6 +25,7 @@ from app.ocr import (
 from app.repositories.ingestion import get_ingestion_job
 from app.services.candidate_builder import CandidateDraft, build_candidate_groups
 from app.services.questions import prepare_question_text
+from app.services.question_similarity import refresh_rule_suggestions
 from app.services.source_storage import resolve_storage_path
 
 
@@ -253,6 +254,7 @@ def _persist_job_results(
                 ]
             )
             session.flush()
+            refresh_rule_suggestions(session, question.id)
 
         session.execute(
             update(IngestionJob)

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from "vue";
+import { computed, ref, watch } from "vue";
 import { useRoute } from "vue-router";
 import { ApiError, request } from "../api/client";
 import PracticeRating from "../components/PracticeRating.vue";
@@ -30,6 +30,9 @@ const loading = ref(true);
 const skipping = ref(false);
 const reviewing = ref(false);
 const sessionId = computed(() => Number(route.params.id));
+let loadRevision = 0;
+const completedCount = computed(() => practiceSession.value?.items.filter(i => i.status !== 'shown').length ?? 0);
+function currentRequest(id: number, revision: number) { return sessionId.value === id && loadRevision === revision; }
 const currentItem = computed(
   () => practiceSession.value?.items.find((item) => item.status === "shown") ?? null,
 );
@@ -43,50 +46,63 @@ function displayError(error: unknown): string {
 }
 
 async function loadSession(): Promise<void> {
+  const id = sessionId.value;
+  const revision = ++loadRevision;
+  practiceSession.value = null;
+  answerDraft.value = "";
+  skipping.value = false;
+  reviewing.value = false;
   loading.value = true;
   errorMessage.value = "";
   try {
-    practiceSession.value = await request<PracticeSession>(
-      `/api/v1/practice-sessions/${sessionId.value}`,
-    );
+    const result = await request<PracticeSession>(`/api/v1/practice-sessions/${id}`);
+    if (currentRequest(id, revision)) practiceSession.value = result;
   } catch (error) {
-    errorMessage.value = displayError(error);
+    if (currentRequest(id, revision)) errorMessage.value = displayError(error);
   } finally {
-    loading.value = false;
+    if (currentRequest(id, revision)) loading.value = false;
   }
 }
 
 async function skipCurrentItem(): Promise<void> {
   if (!currentItem.value || skipping.value || reviewing.value) return;
+  const id = sessionId.value;
+  const revision = loadRevision;
+  const itemId = currentItem.value.id;
   errorMessage.value = "";
   skipping.value = true;
   try {
-    await request(`/api/v1/session-items/${currentItem.value.id}/skip`, { method: "POST" });
+    await request(`/api/v1/session-items/${itemId}/skip`, { method: "POST" });
+    if (!currentRequest(id, revision)) return;
     answerDraft.value = "";
     await loadSession();
   } catch (error) {
-    errorMessage.value = displayError(error);
+    if (currentRequest(id, revision)) errorMessage.value = displayError(error);
   } finally {
-    skipping.value = false;
+    if (currentRequest(id, revision)) skipping.value = false;
   }
 }
 
 async function recordRating(reviewRating: string): Promise<void> {
   if (!currentItem.value || skipping.value || reviewing.value) return;
+  const id = sessionId.value;
+  const revision = loadRevision;
+  const itemId = currentItem.value.id;
   errorMessage.value = "";
   reviewing.value = true;
   try {
-    await request(`/api/v1/session-items/${currentItem.value.id}/review`, {
+    await request(`/api/v1/session-items/${itemId}/review`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ review_rating: reviewRating }),
     });
+    if (!currentRequest(id, revision)) return;
     answerDraft.value = "";
     await loadSession();
   } catch (error) {
-    errorMessage.value = displayError(error);
+    if (currentRequest(id, revision)) errorMessage.value = displayError(error);
   } finally {
-    reviewing.value = false;
+    if (currentRequest(id, revision)) reviewing.value = false;
   }
 }
 
@@ -94,11 +110,11 @@ function rewriteDraft(): void {
   answerDraft.value = "";
 }
 
-onMounted(loadSession);
+watch(sessionId, () => void loadSession(), {immediate:true});
 </script>
 
 <template>
-  <section aria-labelledby="practice-session-title">
+  <section aria-labelledby="practice-session-title" class="practice-session">
     <p v-if="loading">正在加载练习…</p>
     <template v-if="errorMessage">
       <p role="alert">{{ errorMessage }}</p>
@@ -112,11 +128,14 @@ onMounted(loadSession);
       </button>
     </template>
     <template v-if="!loading && practiceSession">
-      <h2 id="practice-session-title">练习会话 #{{ practiceSession.id }}</h2>
+      <header class="page-heading"><div><span class="eyebrow">Practice room</span><h2 id="practice-session-title">练习会话 #{{ practiceSession.id }}</h2><p>完成 {{ completedCount }} / {{ practiceSession.items.length }} · 掌握程度由你自己判断</p></div></header>
+      <progress aria-label="练习完成进度" :value="completedCount" :max="Math.max(1, practiceSession.items.length)" />
+      <div class="practice-workspace"><div class="practice-question">
       <p v-if="practiceSession.completed_at">本次练习已完成</p>
       <template v-else-if="currentItem">
         <p>第 {{ currentItem.ordinal }} 题</p>
         <h3>{{ currentItem.question.text }}</h3>
+        <p v-if="currentItem.question.status === 'merged'" class="helper">这是归并前的历史题目，仍可完成本次练习；记录保留原题 #{{ currentItem.question_id }}。</p>
         <p v-if="currentItem.question.archived_at">此题已归档；仍可完成当前练习。</p>
         <label>
           临时回答
@@ -130,12 +149,12 @@ onMounted(loadSession);
       </template>
       <p v-else>当前会话没有待练习题目。</p>
 
-      <ol aria-label="练习题目顺序">
+      </div><aside aria-label="本次练习队列"><h3>本次题目</h3><ol aria-label="练习题目顺序" class="practice-queue">
         <li v-for="item in practiceSession.items" :key="item.id">
           <span>{{ item.ordinal }}. {{ item.question.text }}</span>
-          <span>{{ item.status }}</span>
+          <span class="muted">{{ {shown:"待练习",completed:"已完成",skipped:"已跳过"}[item.status] }} · 原题 #{{ item.question_id }}</span>
         </li>
-      </ol>
+      </ol></aside></div>
     </template>
   </section>
 </template>

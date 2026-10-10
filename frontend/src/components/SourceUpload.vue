@@ -20,7 +20,8 @@ function submit() {
 </script>
 
 <template>
-  <form aria-label="截图上传" @submit.prevent="submit">
+  <form class="source-upload" aria-label="截图上传" @submit.prevent="submit">
+    <div><h3>上传截图</h3><p class="helper">PNG、JPEG、WebP · 每张截图独立处理</p></div>
     <label>
       选择截图
       <input

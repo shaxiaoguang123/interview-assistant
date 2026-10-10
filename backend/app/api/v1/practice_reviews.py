@@ -1,5 +1,6 @@
 from flask import Blueprint, jsonify, request
-from datetime import timezone
+
+from .serializers import review_json as _review_json
 
 from app.db import get_session
 from app.errors import ApiError
@@ -11,23 +12,6 @@ from app.services.practice_review import (
 
 
 blueprint = Blueprint("practice_reviews_v1", __name__, url_prefix="/api/v1")
-
-
-def _review_json(review):
-    def as_utc(value):
-        if value.tzinfo is None:
-            value = value.replace(tzinfo=timezone.utc)
-        return value.astimezone(timezone.utc).isoformat()
-
-    return {
-        "id": review.id,
-        "question_id": review.question_id,
-        "session_item_id": review.session_item_id,
-        "review_rating": review.review_rating,
-        "reviewed_at": as_utc(review.reviewed_at),
-        "created_at": as_utc(review.created_at),
-        "updated_at": as_utc(review.updated_at),
-    }
 
 
 @blueprint.post("/session-items/<int:session_item_id>/review")

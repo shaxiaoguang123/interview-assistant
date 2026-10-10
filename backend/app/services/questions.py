@@ -5,12 +5,18 @@ import unicodedata
 from datetime import datetime, timezone
 
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy import update
 from sqlalchemy.orm import Session
 
 from app.errors import ApiError
 from app.models.question import Question, QuestionState
 from app.repositories import questions as question_repository
+from app.services.question_similarity import (
+    invalidate_unmerged_question_relations,
+    refresh_rule_suggestions,
+)
 from app.services.taxonomy import validate_active_tag_ids, validate_active_topic_ids
+from app.services.question_relations import _begin_write
 
 
 MAX_QUESTION_TEXT_LENGTH = 10_000
@@ -96,12 +102,18 @@ def create_question(session: Session, payload: dict) -> Question:
                 [topic.id for topic in topics],
                 [tag.id for tag in tags],
             )
+            refresh_rule_suggestions(session, question.id)
         return question
     except IntegrityError as error:
         raise ApiError(409, "CONFLICT", "Question could not be saved") from error
 
 
 def _reject_generic_ocr_candidate_operation(question: Question) -> None:
+    if question.status == "merged" or question.merged_into_question_id is not None:
+        raise ApiError(
+            409, "CONFLICT", "Merged child is read-only; open the canonical Question",
+            {"canonical_question_id": str(question.merged_into_question_id)},
+        )
     if question.status == "pending_review" or (
         question.origin_ingestion_job_id is not None
         and question.ingestion_candidate_state != "confirmed"
@@ -123,12 +135,15 @@ def update_question(session: Session, question_id: int, payload: dict) -> Questi
 
     try:
         with session.begin():
+            _begin_write(session)
             question = question_repository.get_question(session, question_id)
             if question is None:
                 raise ApiError(404, "NOT_FOUND", "Question not found")
             _reject_generic_ocr_candidate_operation(question)
+            text_changed = False
             if "text" in payload:
                 text, normalized, digest = prepare_question_text(payload["text"])
+                text_changed = question.text != text
                 question.text = text
                 question.normalized_text = normalized
                 question.search_text = normalized
@@ -146,6 +161,8 @@ def update_question(session: Session, question_id: int, payload: dict) -> Questi
                 tags = validate_active_tag_ids(session, payload["tag_ids"])
                 question_repository.replace_question_tags(session, question_id, [tag.id for tag in tags])
             session.flush()
+            if text_changed:
+                refresh_rule_suggestions(session, question.id)
             if "topic_ids" in payload:
                 session.expire(question, ["topic_links"])
             if "tag_ids" in payload:
@@ -186,6 +203,7 @@ def list_questions(
 def archive_question(session: Session, question_id: int) -> Question:
     try:
         with session.begin():
+            _begin_write(session)
             question = question_repository.get_question(session, question_id)
             if question is None:
                 raise ApiError(404, "NOT_FOUND", "Question not found")
@@ -193,6 +211,7 @@ def archive_question(session: Session, question_id: int) -> Question:
             if question.archived_at is None:
                 question.archived_at = datetime.now(timezone.utc)
             session.flush()
+            invalidate_unmerged_question_relations(session, question.id)
         return question_repository.get_question(session, question_id) or question
     except IntegrityError as error:
         raise ApiError(409, "CONFLICT", "Question could not be archived") from error
@@ -210,6 +229,7 @@ def update_question_state(session: Session, question_id: int, payload: dict) -> 
             raise ApiError(400, "VALIDATION_ERROR", "Invalid question state", {field: "Must be a boolean"})
 
     with session.begin():
+        _begin_write(session)
         question = question_repository.get_question(session, question_id)
         if question is None:
             raise ApiError(404, "NOT_FOUND", "Question not found")
@@ -217,6 +237,15 @@ def update_question_state(session: Session, question_id: int, payload: dict) -> 
         if question.state is None:
             question.state = QuestionState(is_favorite=False, is_wrong=False)
         for field, value in payload.items():
-            setattr(question.state, field, value)
+            if value:
+                setattr(question.state, field, True)
+            else:
+                # Reserve SQLite before membership reads; clear only the named
+                # flag, preserving notes and the other historical state flag.
+                member_ids = question_repository.canonical_member_ids(session, question_id)
+                session.execute(update(QuestionState).where(
+                    QuestionState.question_id.in_(member_ids)
+                ).values(**{field: False}).execution_options(synchronize_session='fetch'))
+                setattr(question.state, field, False)
         session.flush()
     return question.state

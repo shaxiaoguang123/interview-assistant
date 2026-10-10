@@ -5,7 +5,7 @@ from pathlib import Path
 from logging.config import fileConfig
 
 from alembic import context
-from sqlalchemy import engine_from_config, pool
+from sqlalchemy import engine_from_config, event, pool
 from sqlalchemy.engine import make_url
 
 from app.config import default_database_url
@@ -51,11 +51,31 @@ def run_migrations_online() -> None:
         poolclass=pool.NullPool,
     )
 
+    if connectable.dialect.name == "sqlite":
+
+        @event.listens_for(connectable, "connect")
+        def enable_sqlite_foreign_keys_and_explicit_transactions(
+            dbapi_connection, _connection_record
+        ) -> None:
+            # Disable sqlite3 legacy transaction control. Alembic's SQLite
+            # dialect otherwise treats DDL as non-transactional, so a failed
+            # revision can leave part of its schema behind.
+            dbapi_connection.isolation_level = None
+            cursor = dbapi_connection.cursor()
+            cursor.execute("PRAGMA foreign_keys=ON")
+            cursor.close()
+
+        @event.listens_for(connectable, "begin")
+        def begin_sqlite_migration_transaction(connection) -> None:
+            connection.exec_driver_sql("BEGIN")
+
     with connectable.connect() as connection:
-        if connection.dialect.name == "sqlite":
-            connection.exec_driver_sql("PRAGMA foreign_keys=ON")
-            connection.commit()
-        context.configure(connection=connection, target_metadata=target_metadata, compare_type=True)
+        context.configure(
+            connection=connection,
+            target_metadata=target_metadata,
+            compare_type=True,
+            transactional_ddl=connection.dialect.name == "sqlite",
+        )
         with context.begin_transaction():
             context.run_migrations()
 
