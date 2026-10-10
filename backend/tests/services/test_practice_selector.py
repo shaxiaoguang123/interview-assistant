@@ -46,7 +46,7 @@ def test_same_seed_replays_same_random_order(db_session):
 
     first_ids = [item.question_id for item in first.items]
     second_ids = [item.question_id for item in second.items]
-    assert first.selector_version == "v1"
+    assert first.selector_version == "v2"
     assert first.selection_seed == 123456
     assert first_ids == second_ids
     assert set(first_ids) == {question.id for question in questions}

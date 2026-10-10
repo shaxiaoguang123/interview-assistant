@@ -30,7 +30,7 @@ def test_create_and_read_session(client):
 
     assert created.status_code == 201
     session = created.get_json()
-    assert session["selector_version"] == "v1"
+    assert session["selector_version"] == "v2"
     assert session["selection_seed"] == 123
     assert [item["ordinal"] for item in session["items"]] == [1, 2]
     assert {item["question_id"] for item in session["items"]} == {first["id"], second["id"]}
