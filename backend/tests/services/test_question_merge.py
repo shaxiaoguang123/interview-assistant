@@ -154,7 +154,12 @@ def test_ocr_merge_atomically_confirms_with_revision_and_preserves_evidence_hist
         q=s.get(Question,pair['source'])
         assert (q.status,q.ingestion_candidate_state,q.candidate_revision,q.merged_into_question_id)==('merged','confirmed',4,pair['target'])
     after=_snapshot(app)
-    for name in ['question_source','question_source_ocr_block','ocr_block','session_item','practice_review','ingestion_job','question_state']:
+    # Phase 3 updates only derived root scheduling; original flags/notes remain.
+    assert [row[:4] for row in after['question_state']] == [row[:4] for row in before['question_state']]
+    with app.extensions['sqlalchemy_session_factory']() as s:
+        assert s.get(QuestionState,pair['target']).last_review_rating == 'basic'
+        assert s.get(QuestionState,pair['source']).next_review_at is None
+    for name in ['question_source','question_source_ocr_block','ocr_block','session_item','practice_review','ingestion_job']:
         assert after[name]==before[name]
 
 

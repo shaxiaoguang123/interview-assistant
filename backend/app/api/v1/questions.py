@@ -8,6 +8,7 @@ from app.db import get_session
 from app.repositories import questions as question_repository
 from app.services.question_history import get_canonical_history
 from .serializers import source_json, review_json, session_item_json
+from app.services.review_schedule import schedule_json
 from app.services.question_relations import (
     get_similar_candidates,
     review_question_relation,
@@ -69,6 +70,7 @@ def _question_json(question, flags=None):
             "is_favorite": flags["is_favorite"] if flags else (state.is_favorite if state else False),
             "is_wrong": flags["is_wrong"] if flags else (state.is_wrong if state else False),
             "user_note": state.user_note if state else None,
+            **schedule_json(state),
         },
     }
 
@@ -184,6 +186,7 @@ def patch_question_state(question_id: int):
     flags = question_repository.group_states(get_session(), [state.question_id])[state.question_id]
     return jsonify(
         {
+            **schedule_json(state),
             "question_id": state.question_id,
             "is_favorite": flags["is_favorite"],
             "is_wrong": flags["is_wrong"],

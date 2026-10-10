@@ -3,6 +3,8 @@ from flask import Blueprint, jsonify, request
 from .serializers import review_json as _review_json
 
 from app.db import get_session
+from app.models.question import Question, QuestionState
+from app.services.review_schedule import schedule_json
 from app.errors import ApiError
 from app.services.practice_review import (
     get_question_practice_reviews,
@@ -12,6 +14,14 @@ from app.services.practice_review import (
 
 
 blueprint = Blueprint("practice_reviews_v1", __name__, url_prefix="/api/v1")
+
+
+def _response(review):
+    session = get_session()
+    question = session.get(Question, review.question_id)
+    root_id = question.merged_into_question_id or question.id
+    return {**_review_json(review), "canonical_question_id": root_id,
+            "review_schedule": schedule_json(session.get(QuestionState, root_id))}
 
 
 @blueprint.post("/session-items/<int:session_item_id>/review")
@@ -25,7 +35,7 @@ def post_practice_review(session_item_id: int):
             {"body": "Expected review_rating and optional saved_answer_version_id"},
         )
     review = record_practice_review(get_session(), session_item_id, payload["review_rating"], payload.get("saved_answer_version_id"))
-    return jsonify(_review_json(review)), 201
+    return jsonify(_response(review)), 201
 
 
 @blueprint.patch("/practice-reviews/<int:review_id>")
@@ -33,7 +43,7 @@ def patch_practice_review(review_id: int):
     review = update_practice_review_rating(
         get_session(), review_id, request.get_json(silent=True)
     )
-    return jsonify(_review_json(review))
+    return jsonify(_response(review))
 
 
 @blueprint.get("/questions/<int:question_id>/practice-reviews")

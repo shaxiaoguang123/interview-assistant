@@ -23,7 +23,7 @@ from .taxonomy import utc_now
 class PracticeSession(Base):
     __tablename__ = "practice_session"
     __table_args__ = (
-        CheckConstraint("mode IN ('random', 'topic', 'tag')", name="ck_practice_session_mode"),
+        CheckConstraint("mode IN ('random', 'topic', 'tag', 'favorite', 'wrong', 'due')", name="ck_practice_session_mode"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)

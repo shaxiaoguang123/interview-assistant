@@ -12,6 +12,7 @@ from app.repositories import practice as practice_repository
 from app.services.practice_session import mark_session_completed_if_terminal
 from app.services.questions import get_question
 from app.services.question_relations import _begin_write
+from app.services.review_schedule import recompute_review_schedule
 
 
 REVIEW_RATINGS = {"dont_know", "vague", "basic", "proficient"}
@@ -71,6 +72,7 @@ def record_practice_review(session: Session, session_item_id: int, review_rating
             practice_repository.add_practice_review(session, review)
             mark_session_completed_if_terminal(session, practice_session)
             session.flush()
+            recompute_review_schedule(session, item.question_id)
         return review
     except IntegrityError as error:
         raise ApiError(409, "CONFLICT", "SessionItem already has a PracticeReview") from error
@@ -86,6 +88,7 @@ def update_practice_review_rating(session: Session, review_id: int, payload: dic
         )
     rating = _validate_rating(payload["review_rating"])
     with session.begin():
+        _begin_write(session)
         review = practice_repository.get_practice_review(session, review_id)
         if review is None:
             raise ApiError(404, "NOT_FOUND", "PracticeReview not found")
@@ -93,6 +96,7 @@ def update_practice_review_rating(session: Session, review_id: int, payload: dic
             review.review_rating = rating
             review.updated_at = datetime.now(timezone.utc)
             session.flush()
+            recompute_review_schedule(session, review.question_id)
     return review
 
 

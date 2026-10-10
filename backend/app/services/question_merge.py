@@ -267,6 +267,8 @@ def merge_question(session: Session, canonical_id: int, payload: object) -> Ques
                 source.merged_into_question_id = target.id
             target.updated_at = utc_now()
             session.flush()
+            from app.services.review_schedule import recompute_review_schedule
+            recompute_review_schedule(session, target.id)
             session.expire(target, ['topic_links', 'tag_links'])
             result = question_repository.get_question(session, target.id)
         return result
