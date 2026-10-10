@@ -59,6 +59,7 @@ def _question_json(question, flags=None):
         "canonical_question_id": question.merged_into_question_id or (
             question.id if question.status == "active" else None
         ),
+        "canonical_member_count": flags["member_count"] if flags else None,
         "archived_at": question.archived_at.isoformat() if question.archived_at else None,
         "created_at": question.created_at.isoformat() if question.created_at else None,
         "updated_at": question.updated_at.isoformat() if question.updated_at else None,

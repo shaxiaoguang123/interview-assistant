@@ -245,3 +245,10 @@ def test_child_search_combines_group_state_and_final_taxonomy(client,app,group,f
     assert [q['id'] for q in client.get('/api/v1/questions',query_string=filters).get_json()]==[group['root']]
     filters[field]='false'
     assert client.get('/api/v1/questions',query_string=filters).get_json()==[]
+
+
+def test_root_member_count_supports_safe_list_archive_controls(client,group):
+    roots={q['id']:q for q in client.get('/api/v1/questions').get_json()}
+    assert roots[group['root']]['canonical_member_count']==4
+    assert roots[group['plain']]['canonical_member_count']==1
+    assert client.get(f"/api/v1/questions/{group['root']}").get_json()['canonical_member_count']==4

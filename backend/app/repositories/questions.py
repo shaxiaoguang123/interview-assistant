@@ -34,10 +34,11 @@ def group_states(session: Session, canonical_ids: list[int]) -> dict[int, dict]:
     rows = session.execute(select(
         canonical.label('canonical_id'),
         func.max(QuestionState.is_favorite), func.max(QuestionState.is_wrong),
+        func.count(Question.id),
     ).outerjoin(QuestionState, QuestionState.question_id == Question.id)
       .where(canonical.in_(canonical_ids)).group_by(canonical))
-    return {qid: {'is_favorite': bool(favorite), 'is_wrong': bool(wrong)}
-            for qid, favorite, wrong in rows}
+    return {qid: {'is_favorite': bool(favorite), 'is_wrong': bool(wrong), 'member_count': count}
+            for qid, favorite, wrong, count in rows}
 
 
 def list_questions(
