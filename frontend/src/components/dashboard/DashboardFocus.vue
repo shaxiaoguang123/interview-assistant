@@ -1,7 +1,10 @@
 <script setup lang="ts">
 import { RouterLink } from "vue-router";
+import { practiceModeLabels, type DashboardSession } from "../../api/dashboard";
 
-defineProps<{ dueCount: number; pendingCandidateCount: number }>();
+withDefaults(defineProps<{ dueCount: number; pendingCandidateCount: number; unfinishedSession: DashboardSession | null }>(), {
+  unfinishedSession: null,
+});
 </script>
 
 <template>
@@ -11,6 +14,11 @@ defineProps<{ dueCount: number; pendingCandidateCount: number }>();
       <div class="dashboard-task-count"><strong>{{ dueCount }}</strong><span>道题</span></div>
       <div class="dashboard-task-copy"><h4>到期复习</h4><p>{{ dueCount ? '按计划回顾之前练过的题目。' : '今天暂时没有到期题目，也可以开始一次随机练习。' }}</p></div>
       <RouterLink class="button-link primary" :to="dueCount ? '/practice?mode=due' : '/practice'">{{ dueCount ? '开始复习' : '开始练习' }}</RouterLink>
+    </article>
+    <article v-if="unfinishedSession" class="dashboard-task dashboard-task-resume">
+      <div class="dashboard-task-count"><strong>{{ unfinishedSession.completed_count }}</strong><span>/ {{ unfinishedSession.item_count }}</span></div>
+      <div class="dashboard-task-copy"><h4>继续上次练习</h4><p>{{ practiceModeLabels[unfinishedSession.mode] ?? '练习' }} 还有未完成题目。</p></div>
+      <RouterLink class="button-link" :to="`/practice/sessions/${unfinishedSession.id}`">继续练习</RouterLink>
     </article>
     <article class="dashboard-task dashboard-task-inbox">
       <div class="dashboard-task-count"><strong>{{ pendingCandidateCount }}</strong><span>道题</span></div>

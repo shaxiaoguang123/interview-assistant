@@ -282,6 +282,9 @@ def test_dashboard_uses_live_counts_and_links_recent_answer(client, db_session):
     payload = response.get_json()
     assert payload["due_question_count"] == 1
     assert payload["pending_candidate_count"] == 1
+    assert payload["active_question_count"] == 1
+    assert payload["practice_session_count"] == 0
+    assert payload["unfinished_session"] is None
     assert payload["recent_answers"][0]["question_id"] == question_id
     assert payload["recent_answers"][0]["question_text"] == "Dashboard due question"
     assert payload["active_project_count"] == 1

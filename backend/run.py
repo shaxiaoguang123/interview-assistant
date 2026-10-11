@@ -1,4 +1,5 @@
 import os
+import argparse
 from contextlib import nullcontext
 
 from app import create_app
@@ -8,6 +9,9 @@ from app.maintenance.service_lock import claim_service_lock
 
 
 def main() -> None:
+    parser = argparse.ArgumentParser(add_help=False)
+    parser.add_argument("--launcher-token", default=None, help=argparse.SUPPRESS)
+    parser.parse_known_args()
     app = create_app()
     session_factory = app.extensions["sqlalchemy_session_factory"]
     service_guard = claim_service_lock(app.config["APP_DATA_DIR"]) if app.config.get("APP_DATA_DIR") else nullcontext()
