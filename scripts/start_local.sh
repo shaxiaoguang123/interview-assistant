@@ -35,11 +35,20 @@ AIA_PORT_FILE="$AIA_MANAGER_DIR/launcher.port"
 AIA_LOG_FILE="$AIA_MANAGER_DIR/server.log"
 AIA_SERVICE_LOCK="$AIA_DATA_DIR/.agent-interview-assistant.pid"
 AIA_URL="http://127.0.0.1:$AIA_PORT/"
+AIA_INSTANCE_ID="$(cd "$AIA_BACKEND" && "$AIA_PYTHON" -m app.maintenance instance-id)"
+export APP_INSTANCE_ID="$AIA_INSTANCE_ID"
+
+aia_is_agent_assistant_at_port() {
+  local body
+  body=$(curl -fsS --connect-timeout 1 --max-time 3 "http://127.0.0.1:$1/api/v1/system/status" 2>/dev/null || true)
+  printf '%s' "$body" | grep -Eq '"application"[[:space:]]*:[[:space:]]*"agent-interview-assistant"'
+}
 
 aia_is_this_app_at_port() {
   local body
   body=$(curl -fsS --connect-timeout 1 --max-time 3 "http://127.0.0.1:$1/api/v1/system/status" 2>/dev/null || true)
-  printf '%s' "$body" | grep -Eq '"application"[[:space:]]*:[[:space:]]*"agent-interview-assistant"'
+  [ -n "$body" ] || return 1
+  printf '%s' "$body" | (cd "$AIA_BACKEND" && "$AIA_PYTHON" -m app.maintenance status-matches-instance --expected-id "$AIA_INSTANCE_ID")
 }
 
 aia_open_app() {
@@ -53,9 +62,12 @@ aia_open_app() {
 aia_wait_existing() {
   local port="$1" count=0
   while [ "$count" -lt 60 ]; do
-    if aia_is_this_app_at_port "$port"; then
-      aia_open_app "$port"
-      return 0
+    if aia_is_agent_assistant_at_port "$port"; then
+      if aia_is_this_app_at_port "$port"; then
+        aia_open_app "$port"
+        return 0
+      fi
+      return 2
     fi
     sleep 1
     count=$((count + 1))
@@ -63,9 +75,13 @@ aia_wait_existing() {
   return 1
 }
 
-if aia_is_this_app_at_port "$AIA_PORT"; then
-  aia_open_app "$AIA_PORT"
-  exit 0
+if aia_is_agent_assistant_at_port "$AIA_PORT"; then
+  if aia_is_this_app_at_port "$AIA_PORT"; then
+    aia_open_app "$AIA_PORT"
+    exit 0
+  fi
+  aia_fail "端口 $AIA_PORT 已运行另一个数据目录的 Agent Interview Assistant 实例；没有打开错误实例或终止服务。请使用该实例对应的数据目录，或设置 APP_PORT 启动到其他端口。"
+  exit 1
 fi
 
 if [ -f "$AIA_SERVICE_LOCK" ]; then
@@ -77,7 +93,13 @@ if [ -f "$AIA_SERVICE_LOCK" ]; then
     AIA_MANAGED_PID="$(cat "$AIA_PID_FILE" 2>/dev/null || true)"
     AIA_MANAGED_PORT="$(cat "$AIA_PORT_FILE" 2>/dev/null || printf '%s' "$AIA_PORT")"
     if [ "$AIA_MANAGED_PID" = "$AIA_SERVICE_PID" ]; then
-      if aia_wait_existing "$AIA_MANAGED_PORT"; then exit 0; fi
+      if aia_wait_existing "$AIA_MANAGED_PORT"; then exit 0; else
+        AIA_WAIT_RESULT=$?
+        if [ "$AIA_WAIT_RESULT" -eq 2 ]; then
+          aia_fail "端口 $AIA_MANAGED_PORT 属于另一个数据目录的应用实例；没有连接或停止该服务。"
+          exit 1
+        fi
+      fi
       printf '服务进程仍在启动或读取数据。没有再次启动或终止进程。\n日志位置：%s\n' "$AIA_LOG_FILE" >&2
       exit 1
     fi
@@ -94,16 +116,26 @@ fi
 
 AIA_START_LOCK="$AIA_MANAGER_DIR/start.lock"
 if ! mkdir "$AIA_START_LOCK" 2>/dev/null; then
-  if aia_wait_existing "$AIA_PORT"; then exit 0; fi
+  if aia_wait_existing "$AIA_PORT"; then exit 0; else
+    AIA_WAIT_RESULT=$?
+    if [ "$AIA_WAIT_RESULT" -eq 2 ]; then
+      aia_fail "端口 $AIA_PORT 属于另一个数据目录的应用实例；没有连接或停止该服务。"
+      exit 1
+    fi
+  fi
   aia_fail "另一个启动操作仍在进行；没有创建第二个服务进程。请稍后重试。"
   exit 1
 fi
 trap 'rmdir "$AIA_START_LOCK" 2>/dev/null || true' EXIT
 
 # Recheck after acquiring the launcher lock so two clicks cannot race into startup.
-if aia_is_this_app_at_port "$AIA_PORT"; then
-  aia_open_app "$AIA_PORT"
-  exit 0
+if aia_is_agent_assistant_at_port "$AIA_PORT"; then
+  if aia_is_this_app_at_port "$AIA_PORT"; then
+    aia_open_app "$AIA_PORT"
+    exit 0
+  fi
+  aia_fail "端口 $AIA_PORT 已被另一个数据目录的 Agent Interview Assistant 实例使用；没有连接或停止该服务。"
+  exit 1
 fi
 
 printf '正在检查并初始化数据库…\n'

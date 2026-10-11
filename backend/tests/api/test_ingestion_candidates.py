@@ -2,6 +2,7 @@ from datetime import datetime, timezone
 from hashlib import sha256
 from io import BytesIO
 from importlib import import_module
+import json
 from pathlib import Path
 from queue import Queue
 import threading
@@ -1762,3 +1763,243 @@ def test_candidate_merge_survivor_refreshes_suggestions_for_final_text(client, a
         assert survivor.status == "pending_review"
         assert relation is not None
         assert relation.decision_status == "suggested"
+
+
+class _FakeIngestionProvider:
+    def __init__(self, response):
+        self.response = response
+        self.messages = []
+
+    def complete(self, messages):
+        self.messages.append(messages)
+        if isinstance(self.response, str):
+            return self.response
+        return json.dumps(self.response, ensure_ascii=False)
+
+
+def _ai_suggestion_payload(block_id, topic_id, tag_id):
+    return {
+        "suggested_text": "LangGraph 的 Checkpointer 有什么作用？如何实现状态持久化与中断恢复？",
+        "topic_ids": [topic_id],
+        "tag_ids": [tag_id],
+        "difficulty": "medium",
+        "reason": "保留了 OCR 中关于持久化和恢复的两个问题。",
+        "warnings": [],
+        "split_parts": [
+            {
+                "text": "LangGraph 的 Checkpointer 有什么作用？",
+                "ocr_block_ids": [block_id],
+                "source_text_snapshot": "checkpointer 有什么作用？",
+            },
+            {
+                "text": "如何实现状态持久化与中断恢复？",
+                "ocr_block_ids": [block_id],
+                "source_text_snapshot": "怎么做断点恢复？",
+            },
+        ],
+    }
+
+
+def test_ai_suggestion_is_validated_and_does_not_mutate_candidate_or_ocr(client, app):
+    topic_id = _create_topic(client)
+    tag_response = client.post("/api/v1/tags", json={"name": "AI ingestion tag"})
+    assert tag_response.status_code == 201
+    tag_id = tag_response.get_json()["id"]
+    fixture = _candidate_fixture(
+        client,
+        app,
+        text="LangGraph checkpointer 有什么作用？怎么做断点恢复？",
+        block_texts=["LangGraph checkpointer 有什么作用？怎么做断点恢复？"],
+    )
+    fake = _FakeIngestionProvider(
+        _ai_suggestion_payload(fixture["block_ids"][0], topic_id, tag_id)
+    )
+    app.config["LLM_PROVIDER_FACTORY"] = lambda _config: fake
+
+    response = client.post(
+        f"/api/v1/ingestion-candidates/{fixture['candidate_id']}/ai-suggestions",
+        json={"expected_revision": fixture["revision"]},
+    )
+
+    assert response.status_code == 200, response.get_json()
+    result = response.get_json()
+    assert result["suggested_text"].startswith("LangGraph 的 Checkpointer")
+    assert result["topic_ids"] == [topic_id]
+    assert result["tag_ids"] == [tag_id]
+    assert result["difficulty"] == "medium"
+    assert len(result["split_parts"]) == 2
+    assert all(part["ocr_block_ids"] == fixture["block_ids"] for part in result["split_parts"])
+    sent = json.dumps(fake.messages, ensure_ascii=False)
+    assert "怎么做断点恢复？" in sent
+    assert "candidate.png" not in sent
+    assert "api-key" not in sent
+    with app.extensions["sqlalchemy_session_factory"]() as session:
+        candidate = session.get(Question, fixture["candidate_id"])
+        blocks = list(session.scalars(select(OCRBlock).where(OCRBlock.id.in_(fixture["block_ids"]))))
+        assert candidate.text == "LangGraph checkpointer 有什么作用？怎么做断点恢复？"
+        assert candidate.difficulty is None
+        assert candidate.candidate_revision == fixture["revision"]
+        assert [block.id for block in blocks] == fixture["block_ids"]
+        assert blocks[0].text == "LangGraph checkpointer 有什么作用？怎么做断点恢复？"
+
+
+@pytest.mark.parametrize(
+    "invalid_response",
+    [
+        "not json",
+        {"suggested_text": "   ", "topic_ids": [], "tag_ids": [], "difficulty": None,
+         "reason": "", "warnings": [], "split_parts": []},
+        {"suggested_text": "Valid text", "topic_ids": [999999], "tag_ids": [], "difficulty": None,
+         "reason": "", "warnings": [], "split_parts": []},
+        {"suggested_text": "Valid text", "topic_ids": [], "tag_ids": [], "difficulty": "expert",
+         "reason": "", "warnings": [], "split_parts": []},
+    ],
+)
+def test_ai_suggestion_rejects_invalid_structured_response_without_mutation(
+    client, app, invalid_response
+):
+    fixture = _candidate_fixture(client, app)
+    fake = _FakeIngestionProvider(invalid_response)
+    app.config["LLM_PROVIDER_FACTORY"] = lambda _config: fake
+
+    response = client.post(
+        f"/api/v1/ingestion-candidates/{fixture['candidate_id']}/ai-suggestions",
+        json={"expected_revision": fixture["revision"]},
+    )
+
+    assert response.status_code == 502
+    assert response.get_json()["error"]["code"] == "INGESTION_AI_RESPONSE_INVALID"
+    with app.extensions["sqlalchemy_session_factory"]() as session:
+        candidate = session.get(Question, fixture["candidate_id"])
+        assert candidate.text == "What is MCP?"
+        assert candidate.candidate_revision == fixture["revision"]
+
+
+def test_ai_split_rejects_ocr_blocks_not_cited_by_candidate(client, app):
+    fixture = _candidate_fixture(client, app)
+    payload = _ai_suggestion_payload(fixture["block_ids"][0], 999, 999)
+    payload["topic_ids"] = []
+    payload["tag_ids"] = []
+    payload["split_parts"][0]["ocr_block_ids"] = ["00000000-0000-4000-8000-ffffffffffff"]
+    fake = _FakeIngestionProvider(payload)
+    app.config["LLM_PROVIDER_FACTORY"] = lambda _config: fake
+
+    response = client.post(
+        f"/api/v1/ingestion-candidates/{fixture['candidate_id']}/ai-suggestions",
+        json={"expected_revision": fixture["revision"]},
+    )
+
+    assert response.status_code == 502
+    assert response.get_json()["error"]["code"] == "INGESTION_AI_RESPONSE_INVALID"
+    with app.extensions["sqlalchemy_session_factory"]() as session:
+        assert session.get(Question, fixture["candidate_id"]).candidate_revision == fixture["revision"]
+
+
+def test_ai_split_rejects_source_excerpt_not_present_in_ocr(client, app):
+    fixture = _candidate_fixture(client, app, text="First? Second?", block_texts=["First? Second?"])
+    payload = _ai_suggestion_payload(fixture["block_ids"][0], 1, 1)
+    payload["topic_ids"] = []
+    payload["tag_ids"] = []
+    payload["split_parts"][0]["source_text_snapshot"] = "A fabricated screenshot excerpt"
+    fake = _FakeIngestionProvider(payload)
+    app.config["LLM_PROVIDER_FACTORY"] = lambda _config: fake
+
+    response = client.post(
+        f"/api/v1/ingestion-candidates/{fixture['candidate_id']}/ai-suggestions",
+        json={"expected_revision": fixture["revision"]},
+    )
+
+    assert response.status_code == 502
+    assert response.get_json()["error"]["code"] == "INGESTION_AI_RESPONSE_INVALID"
+    with app.extensions["sqlalchemy_session_factory"]() as session:
+        assert session.get(Question, fixture["candidate_id"]).candidate_revision == fixture["revision"]
+
+
+def test_ai_suggestion_rejects_stale_candidate_revision_before_provider_call(client, app):
+    fixture = _candidate_fixture(client, app)
+    changed = client.patch(
+        f"/api/v1/ingestion-candidates/{fixture['candidate_id']}",
+        json={"expected_revision": fixture["revision"], "text": "Updated candidate"},
+    )
+    assert changed.status_code == 200
+    fake = _FakeIngestionProvider({})
+    app.config["LLM_PROVIDER_FACTORY"] = lambda _config: fake
+
+    response = client.post(
+        f"/api/v1/ingestion-candidates/{fixture['candidate_id']}/ai-suggestions",
+        json={"expected_revision": fixture["revision"]},
+    )
+
+    assert response.status_code == 409
+    assert response.get_json()["error"]["code"] == "CONFLICT"
+    assert fake.messages == []
+
+
+def test_ai_suggestion_discards_response_if_candidate_changes_during_provider_call(client, app):
+    fixture = _candidate_fixture(client, app)
+    payload = _ai_suggestion_payload(fixture["block_ids"][0], 1, 1)
+
+    class MutatingProvider(_FakeIngestionProvider):
+        def complete(self, messages):
+            self.messages.append(messages)
+            with app.extensions["sqlalchemy_session_factory"].begin() as session:
+                candidate = session.get(Question, fixture["candidate_id"])
+                candidate.candidate_revision += 1
+            return json.dumps(payload, ensure_ascii=False)
+
+    fake = MutatingProvider(payload)
+    app.config["LLM_PROVIDER_FACTORY"] = lambda _config: fake
+
+    response = client.post(
+        f"/api/v1/ingestion-candidates/{fixture['candidate_id']}/ai-suggestions",
+        json={"expected_revision": fixture["revision"]},
+    )
+
+    assert response.status_code == 409
+    assert response.get_json()["error"]["code"] == "CONFLICT"
+    with app.extensions["sqlalchemy_session_factory"]() as session:
+        candidate = session.get(Question, fixture["candidate_id"])
+        assert candidate.text == "What is MCP?"
+        assert candidate.candidate_revision == fixture["revision"] + 1
+
+
+def test_ai_suggestion_without_provider_keeps_ocr_flow_available(client, app):
+    fixture = _candidate_fixture(client, app)
+
+    response = client.post(
+        f"/api/v1/ingestion-candidates/{fixture['candidate_id']}/ai-suggestions",
+        json={"expected_revision": fixture["revision"]},
+    )
+
+    assert response.status_code == 503
+    assert response.get_json()["error"]["code"] == "LLM_NOT_CONFIGURED"
+    assert client.get(f"/api/v1/ingestions/{fixture['job_id']}/candidates").status_code == 200
+
+
+def test_candidate_patch_saves_existing_difficulty_field(client, app):
+    fixture = _candidate_fixture(client, app)
+
+    response = client.patch(
+        f"/api/v1/ingestion-candidates/{fixture['candidate_id']}",
+        json={"expected_revision": fixture["revision"], "difficulty": "hard"},
+    )
+
+    assert response.status_code == 200
+    assert response.get_json()["difficulty"] == "hard"
+    assert response.get_json()["candidate_revision"] == fixture["revision"] + 1
+
+
+def test_candidate_patch_rejects_nonstandard_difficulty_without_revision_change(client, app):
+    fixture = _candidate_fixture(client, app)
+
+    response = client.patch(
+        f"/api/v1/ingestion-candidates/{fixture['candidate_id']}",
+        json={"expected_revision": fixture["revision"], "difficulty": "expert"},
+    )
+
+    assert response.status_code == 400
+    assert response.get_json()["error"]["fields"]["difficulty"]
+    with app.extensions["sqlalchemy_session_factory"]() as session:
+        candidate = session.get(Question, fixture["candidate_id"])
+        assert candidate.difficulty is None
+        assert candidate.candidate_revision == fixture["revision"]

@@ -40,6 +40,7 @@ def allowed_origins_from_environment() -> list[str]:
 
 class Config:
     APP_DATA_DIR = default_data_dir()
+    APP_INSTANCE_ID = os.environ.get("APP_INSTANCE_ID", "")
     SOURCE_STORAGE_DIR = default_source_storage_dir()
     DATABASE_URL = default_database_url()
     ALLOWED_ORIGINS = allowed_origins_from_environment()

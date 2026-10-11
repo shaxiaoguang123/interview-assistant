@@ -49,6 +49,7 @@ interface UploadResult {
 interface Candidate {
   id: number;
   text: string;
+  difficulty: string | null;
   status: string;
   archived_at: string | null;
   candidate_state: string;
@@ -365,6 +366,15 @@ async function refreshCurrentJob(
   if (expectedJobId !== null && selectedJobId.value === expectedJobId) {
     await openJob(expectedJobId, preferredCandidateId, preferredSourceId);
   }
+}
+
+async function refreshAfterAiConflict() {
+  const jobId = selectedJobId.value;
+  const candidateId = selectedCandidateId.value;
+  const sourceId = selectedSourceId.value;
+  if (jobId === null || candidateId === null) return;
+  await refreshCurrentJob(candidateId, sourceId, jobId);
+  setHistoryErrorForJob(jobId, "候选已更新并重新读取；若有未保存草稿，编辑器会保留以供你对照后决定是否保存。");
 }
 
 function conflictMessage(error: unknown, fallback: string): string {
@@ -780,6 +790,7 @@ onMounted(loadSources);
         :confirmation-blocked="!canConfirmSelectedCandidate"
         @select-source="selectedSourceId = $event"
         @dirty-change="candidateDraftDirty = $event"
+        @ai-conflict="refreshAfterAiConflict"
         @save="patchCandidate"
         @split="splitCandidate"
         @archive="candidateDisposition('archive', $event)"
