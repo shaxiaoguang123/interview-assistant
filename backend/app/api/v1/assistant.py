@@ -2,34 +2,40 @@ from flask import Blueprint,jsonify,request,current_app
 from app.db import get_session
 from app.errors import ApiError
 from app.services import assistant as service
-from app.services.llm_provider import provider,public_config,validate_base_url
+from app.services.llm_provider import provider,validate_base_url
+from app.services.provider_settings import public_provider_settings,save_provider_settings
 
 blueprint=Blueprint('assistant_v1',__name__,url_prefix='/api/v1')
 
 
 @blueprint.get('/llm/config')
-def config():return jsonify(public_config())
+def config():return jsonify(public_provider_settings(current_app._get_current_object()))
 
 
 @blueprint.patch('/llm/config')
 def update_config():
     payload=request.get_json(silent=True)
-    if not isinstance(payload,dict) or not payload or set(payload)-{'base_url','model','api_key'}:
+    if not isinstance(payload,dict) or not payload or set(payload)-{'base_url','model','api_key','clear_api_key'}:
         raise ApiError(400,'VALIDATION_ERROR','模型配置字段无效。')
-    values={}
-    if 'base_url' in payload:values['LLM_BASE_URL']=validate_base_url(payload['base_url'])
+    normalized={}
+    if 'base_url' in payload:normalized['base_url']=validate_base_url(payload['base_url'])
     if 'model' in payload:
         model=payload['model']
         if not isinstance(model,str) or not model.strip() or len(model)>120:
             raise ApiError(400,'VALIDATION_ERROR','请填写有效模型名称。')
-        values['LLM_MODEL']=model.strip()
+        normalized['model']=model.strip()
     if 'api_key' in payload:
         key=payload['api_key']
         if not isinstance(key,str) or not key.strip() or len(key)>2000:
             raise ApiError(400,'VALIDATION_ERROR','API Key 无效，留空时应省略字段以保留当前凭据。')
-        values['LLM_API_KEY']=key.strip()
-    current_app.config.update(values)
-    return jsonify(public_config())
+        normalized['api_key']=key.strip()
+    if 'clear_api_key' in payload and type(payload['clear_api_key']) is not bool:
+        raise ApiError(400,'VALIDATION_ERROR','清除密钥选项必须为布尔值。')
+    if 'clear_api_key' in payload:normalized['clear_api_key']=payload['clear_api_key']
+    try:
+        return jsonify(save_provider_settings(current_app._get_current_object(),normalized))
+    except ValueError as error:
+        raise ApiError(409,'LLM_SETTING_ENV_OVERRIDE',str(error)) from error
 
 
 @blueprint.post('/llm/test')

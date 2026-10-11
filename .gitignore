@@ -40,3 +40,6 @@ uploads/
 
 # Phase 4 synthetic browser evidence and isolated material storage
 .superpowers/sdd/phase-4-project-material-llm/
+
+# Local Dashboard, backup and settings browser QA (synthetic data only)
+.superpowers/sdd/mvp-usability-data-management/

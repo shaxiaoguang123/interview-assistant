@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from "vue";
-import { RouterLink } from "vue-router";
+import { computed, inject, onMounted, ref, watch } from "vue";
+import { RouterLink, routeLocationKey, routerKey } from "vue-router";
 import { ApiError, request } from "../api/client";
 import QuestionForm from "../components/QuestionForm.vue";
 
@@ -34,6 +34,8 @@ const wrongOnly = ref(false);
 const errorMessage = ref("");
 const loading = ref(false);
 const showForm = ref(false);
+const route = inject(routeLocationKey, null);
+const router = inject(routerKey, null);
 let questionListRevision = 0;
 const filterCount = computed(() => selectedTopicIds.value.length + selectedTagIds.value.length + Number(includeArchived.value) + Number(favoriteOnly.value) + Number(wrongOnly.value));
 function clearFilters() {searchQuery.value='';selectedTopicIds.value=[];selectedTagIds.value=[];includeArchived.value=false;favoriteOnly.value=false;wrongOnly.value=false;void loadQuestions();}
@@ -93,10 +95,16 @@ async function createQuestion(payload: {
       body: JSON.stringify(payload),
     });
     showForm.value = false;
+    if (route?.query.new === "1") await router?.replace({ path: "/questions" });
     await loadQuestions();
   } catch (error) {
     errorMessage.value = displayError(error);
   }
+}
+
+function toggleQuestionForm() {
+  showForm.value = !showForm.value;
+  if (!showForm.value && route?.query.new === "1") void router?.replace({ path: "/questions" });
 }
 
 async function archiveQuestion(question: QuestionItem): Promise<void> {
@@ -121,12 +129,13 @@ async function reloadWorkspace() {
 }
 
 onMounted(reloadWorkspace);
+if (route) watch(() => route.query.new, (value) => { if (value === "1") showForm.value = true; }, { immediate: true });
 </script>
 
 <template>
   <section aria-labelledby="question-bank-title" class="question-bank">
     <header class="page-heading"><div><span class="eyebrow">Knowledge library</span><h2 id="question-bank-title">Agent 面试题库</h2><p>整理技术问题，保留来源证据，让每一次练习有据可循。</p></div>
-      <button type="button" class="primary" aria-label="切换新增题目表单" @click="showForm = !showForm">{{ showForm ? "取消新增" : "新增题目" }}</button>
+      <button type="button" class="primary" aria-label="切换新增题目表单" @click="toggleQuestionForm">{{ showForm ? "取消新增" : "新增题目" }}</button>
     </header>
     <div v-if="errorMessage"><p role="alert">{{ errorMessage }}</p><button type="button" aria-label="重试加载题库" @click="reloadWorkspace">重新加载题库</button></div>
     <section v-if="showForm" class="panel new-question" aria-label="新增题目"><h3>新增题目</h3><QuestionForm :topics="topics" :tags="tags" @save="createQuestion" /></section>

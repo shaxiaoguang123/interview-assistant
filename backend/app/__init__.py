@@ -16,7 +16,10 @@ from .api.v1.saved_answers import blueprint as saved_answers_blueprint
 from .api.v1.progress import blueprint as progress_blueprint
 from .api.v1.materials import blueprint as materials_blueprint
 from .api.v1.assistant import blueprint as assistant_blueprint
+from .api.v1.backups import blueprint as backups_blueprint
+from .api.v1.dashboard import blueprint as dashboard_blueprint
 from .services.assistant import init_assistant
+from .services.provider_settings import load_local_provider_settings
 from .config import Config
 from .db import init_db
 from .errors import register_error_handlers
@@ -46,6 +49,8 @@ def create_app(test_config: dict | None = None) -> Flask:
     if test_config:
         app.config.update(test_config)
 
+    explicit_provider = set(test_config or {}) & {"LLM_BASE_URL", "LLM_MODEL", "LLM_API_KEY"}
+    load_local_provider_settings(app, explicitly_configured=explicit_provider)
     init_assistant(app)
     register_error_handlers(app)
     init_db(app)
@@ -60,6 +65,8 @@ def create_app(test_config: dict | None = None) -> Flask:
     app.register_blueprint(progress_blueprint)
     app.register_blueprint(materials_blueprint)
     app.register_blueprint(assistant_blueprint)
+    app.register_blueprint(backups_blueprint)
+    app.register_blueprint(dashboard_blueprint)
     _register_frontend_routes(app)
     app.register_blueprint(topics_blueprint)
     app.register_blueprint(tags_blueprint)
