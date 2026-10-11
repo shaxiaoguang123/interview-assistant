@@ -36,7 +36,7 @@
 - 「项目经历」维护名称、简介、技术栈、个人职责、难点、成果和亮点。创建及事实变更自动追加唯一 Project Profile 的版本；备注不进入 Profile，状态与备注修改不产生事实版本。
 - 「资料库」支持 UTF-8 TXT / Markdown、可提取文字的 PDF、DOCX（含表格），单文件最多 10 MB、解析文字最多 500,000 字。扫描型或加密 PDF 提示不能提取，不会创建伪成功版本。原文件、SHA-256、页码和文本片段保留，可切换旧版本。
 - 可关联项目、设置有效状态、关闭「允许加入 AI 上下文」、归档。系统 Profile 只能通过项目表单修改事实，单独可设置上下文开关。
-- 模型使用独立 OpenAI-compatible Chat Completions Adapter。通过本机环境变量配置 `LLM_BASE_URL`、`LLM_API_KEY`、`LLM_MODEL`；「模型设置」可查看配置、测试文本连接或应用本次进程配置。密钥不返回前端，表单提交后清空；进程配置重启后不保留。
+- 模型使用独立 OpenAI-compatible Chat Completions Adapter。可通过本机环境变量或「设置」配置 `LLM_BASE_URL`、`LLM_API_KEY`、`LLM_MODEL`；本机设置在服务重启后保留，环境变量优先。密钥不返回前端，表单提交后清空，并与备份分开保存。
 - 题目详情、保存回答和练习草稿均提供 AI 润色、参考答案与分析。先预览实际发送的资料片段，再明确生成；不选择资料时只发送题目和相关回答。
 - Project 选择展开当前有效、允许上下文且未归档的资料；可单独排除文件。只在选中的当前版本检索，采用 SQLite FTS5 和关键词回退。无命中时明确标记为选中资料摘要，不宣称高相关。
 - 结果默认是临时预览，最多保留 30 分钟、32 条，服务重启或刷新前端会丢失未保存界面状态。明确保存后才创建 AssistantOutput；可独立保存参考答案/分析，之后将参考答案整理为自己的回答。
@@ -57,6 +57,21 @@ LLM_MODEL=gpt-6-luna
 新增主要 API：`/projects`、`/projects/{id}/materials`、`/materials`、`/materials/{id}/versions`、`/material-versions/{id}`、`/materials/search`；`/llm/config`、`/llm/test`；`/assistant/context-preview`、`/assistant/polish`、`/assistant/reference-answer`、`/assistant/analyze`、`/assistant/previews/{id}/save`；`/questions/{id}/assistant-outputs`。所有路径均位于 `/api/v1` 下。
 
 Project 与 Material 以归档为主要清理方式。有历史 AssistantOutputSource 引用的资料不能永久删除；无依赖的普通资料可通过 deletion-impact / 带 confirm=true 的 DELETE API 删除。系统 Profile 不能单独删除。
+
+## 工作台与本机数据备份
+
+- `/` 会进入 Dashboard，显示真实到期复习、待审核 OCR 候选、最近回答与练习、有效项目和资料更新。
+- 设置页可导出包含 SQLite 在线快照、截图/预览、资料原文件与清单校验值的 ZIP；API Key、Provider 配置、OCR 模型、源码和临时数据不进入备份。
+- 在设置页选择 ZIP 可先校验文件哈希、SQLite 完整性、外键和数据库所引用的资源文件。
+- 恢复必须先停止 Flask。建议恢复到新的空 `APP_DATA_DIR`，通过离线 CLI 在暂存目录校验后切换：
+
+~~~bash
+cd backend
+python -m app.maintenance inspect --backup "/path/to/agent-interview-backup.zip"
+python -m app.maintenance restore --backup "/path/to/agent-interview-backup.zip" --target "/path/to/new-app-data"
+~~~
+
+恢复到已有数据目录需要加 `--replace-existing` 并输入命令提示的确认语；旧目录会保留为 `.pre-restore-*` 副本。启动应用时将 `APP_DATA_DIR` 指向新目录；如配置了 `DATABASE_URL` 或 `SOURCE_STORAGE_DIR`，也要确保它们指向恢复数据。API Key 不包含在备份中，需在设置页重新输入。
 
 ## 开发环境
 
@@ -213,7 +228,7 @@ npm --prefix frontend test
 npm --prefix frontend run build
 ```
 
-当前实现范围是 Phase 0–4：题库、OCR、人工 Canonical Merge、保存回答、固定间隔复习、项目与资料，以及用户主动触发的 AI 辅助。Phase 1B 不包含 VLM/LLM 自动提题或分类、自动语义归并、SavedAnswer、Project/Resume/Material、LLM 参考答案、模拟面试、语音/视频、多 Agent 或社交平台自动采集。
+当前包含 Phase 0–4 产品能力，并补充 Dashboard、本地完整备份恢复和 Provider 设置持久化体验；这些工作台改进不定义新的正式产品阶段。Phase 1B 不包含 VLM/LLM 自动提题或分类、自动语义归并；当前也不包含模拟面试、语音/视频、多 Agent 或社交平台自动采集。
 
 
 ## 相似题审核与规范题归并（Phase 1C）

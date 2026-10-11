@@ -57,8 +57,5 @@ def provider():
 
 
 def public_config():
-    config=current_app.config
-    return {'base_url':config.get('LLM_BASE_URL',''),'model':config.get('LLM_MODEL',''),
-        'has_api_key':bool(config.get('LLM_API_KEY')),
-        'configured':bool(config.get('LLM_PROVIDER_FACTORY') or config.get('LLM_BASE_URL') and config.get('LLM_API_KEY') and config.get('LLM_MODEL')),
-        'configuration_scope':'environment_or_current_process'}
+    from app.services.provider_settings import public_provider_settings
+    return public_provider_settings(current_app._get_current_object())

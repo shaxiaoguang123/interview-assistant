@@ -1,6 +1,7 @@
 <script setup lang="ts">
-defineProps<{name: "bank" | "inbox" | "taxonomy" | "practice" | "brand" | "progress" | "projects" | "materials" | "settings"}>();
+defineProps<{name: "dashboard" | "bank" | "inbox" | "taxonomy" | "practice" | "brand" | "progress" | "projects" | "materials" | "settings"}>();
 const paths = {
+  dashboard: "M4 4h7v7H4zM13 4h7v4h-7zM13 10h7v10h-7zM4 13h7v7H4z",
   bank: "M4 4h6v7H4zM14 4h6v7h-6zM4 15h6v5H4zM14 15h6v5h-6z",
   inbox: "M4 4h16v16H4zM4 14h5l2 3h2l2-3h5M8 8h8M8 11h5",
   taxonomy: "M12 4v6M5 14v-4h14v4M3 15h4v5H3zM10 15h4v5h-4zM17 15h4v5h-4zM10 2h4v4h-4z",

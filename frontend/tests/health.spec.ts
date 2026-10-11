@@ -14,7 +14,10 @@ describe("local app shell", () => {
       "fetch",
       vi.fn(async (input: RequestInfo | URL) => {
         const path = String(input);
-        const body = path === "/api/v1/health" ? { status: "ok" } : [];
+        const body = path === "/api/v1/health" ? { status: "ok" } : path === "/api/v1/dashboard" ? {
+          as_of: "2026-10-11T00:00:00Z", due_question_count: 0, pending_candidate_count: 0,
+          active_project_count: 0, recent_answers: [], recent_sessions: [], recent_materials: [], recent_ai_outputs: [],
+        } : [];
         return { ok: true, status: 200, json: async () => body } as Response;
       }),
     );

@@ -300,7 +300,7 @@ onBeforeUnmount(() => { questionLoadRevision += 1; historyLoadRevision += 1; });
       </button>
     </template>
     <template v-if="!loading && question">
-      <header class="page-heading"><div><span class="eyebrow">Question workspace · #{{ question.id }}</span><h2 id="question-detail-title">题目详情</h2></div><RouterLink to="/">返回题库</RouterLink></header>
+      <header class="page-heading"><div><span class="eyebrow">Question workspace · #{{ question.id }}</span><h2 id="question-detail-title">题目详情</h2></div><RouterLink to="/questions">返回题库</RouterLink></header>
       <div v-if="mergeSuccess?.canonicalId === questionId" role="status" class="success-banner">归并成功，已保留规范题 #{{ mergeSuccess.canonicalId }}。</div>
       <div v-if="hasVerifiedFromQuestion" class="canonical-banner">原题 #{{ fromQuestionId }} 已归并至当前规范题。<RouterLink :to="`/questions/${fromQuestionId}?history=1`">查看原始正文与历史</RouterLink></div>
       <article class="question-overview">

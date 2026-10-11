@@ -10,9 +10,13 @@ export interface AssistantPreview {preview_id:string;question_id:number;operatio
 export interface AssistantOutput {id:number;question_id:number;output_type:AssistantOperation;origin_kind:string;content:string;sources:AssistantSource[];model:string;created_at:string;source_saved_answer_version_id:number|null}
 export interface SaveAssistantInput {save_kind:'output'|'new_answer'|'answer_version';content?:string;saved_answer_id?:number;self_rating?:number|null;source_session_item_id?:number;source_practice_review_id?:number}
 export interface SaveAssistantResult {output:AssistantOutput;answer:SavedAnswer|null;version:AnswerVersion|null}
-export interface LLMConfig {base_url:string;model:string;has_api_key:boolean;configured:boolean;configuration_scope:string}
+export interface LLMConfig {
+  base_url: string; model: string; has_api_key: boolean; configured: boolean; configuration_scope: string;
+  base_url_source: 'environment'|'local'|'not_configured'; model_source: 'environment'|'local'|'not_configured';
+  api_key_source: 'environment'|'local'|'not_configured'; editable: {base_url:boolean;model:boolean;api_key:boolean}; data_dir: string;
+}
 export const getLLMConfig=()=>request<LLMConfig>('/api/v1/llm/config');
-export const saveLLMConfig=(input:{base_url:string;model:string;api_key?:string})=>request<LLMConfig>('/api/v1/llm/config',json('PATCH',input));
+export const saveLLMConfig=(input:{base_url?:string;model?:string;api_key?:string;clear_api_key?:boolean})=>request<LLMConfig>('/api/v1/llm/config',json('PATCH',input));
 export const testLLMConnection=()=>request<{connected:boolean;model:string}>('/api/v1/llm/test',{method:'POST'});
 export const previewContext=(input:AssistantInput)=>request<ContextPreview>('/api/v1/assistant/context-preview',json('POST',input));
 export const generateAssistant=(input:AssistantInput)=>request<AssistantPreview>(`/api/v1/assistant/${input.operation.replace('_','-')}`,json('POST',input));

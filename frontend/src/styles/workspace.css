@@ -46,15 +46,15 @@ summary { min-height: 44px; cursor: pointer; font-weight: 600; padding: 10px 0; 
 [role="alert"] { border: 1px solid #e9a8b3; background: var(--danger-soft); color: var(--danger); padding: 12px 16px; border-radius: 8px; overflow-wrap: anywhere; }
 [role="status"] { color: var(--muted); }
 .app-shell { display: grid; grid-template-columns: 224px minmax(0,1fr); min-height: 100vh; }
-.workspace-sidebar { display: flex; flex-direction: column; gap: 24px; padding: 32px 16px; background: var(--surface); border-right: 1px solid var(--border); position: sticky; top: 0; height: 100vh; }
+.workspace-sidebar { display: flex; flex-direction: column; gap: 20px; padding: 32px 16px; background: var(--surface); border-right: 1px solid var(--border); position: sticky; top: 0; height: 100vh; }
 .workspace-brand { display: flex; gap: 12px; align-items: flex-start; }
 .workspace-brand h1 { font-size: 15px; line-height: 1.4; margin: 0 0 4px; letter-spacing: -.2px; }
 .workspace-brand p { font-size: 12px; color: var(--muted); margin: 0; }
 .brand-mark { display: grid; place-items: center; width: 36px; height: 36px; flex-shrink: 0; border-radius: 9px; background: var(--brand); color: white; }
 .workspace-icon { width: 21px; height: 21px; flex-shrink: 0; }
 .nav-caption { font-size: 12px; color: var(--muted); letter-spacing: 2px; margin: 8px 12px -12px; }
-.workspace-sidebar nav { display: flex; flex-direction: column; gap: 8px; }
-.workspace-sidebar nav a { display: flex; gap: 12px; align-items: center; padding: 12px; border-radius: 8px; text-decoration: none; color: var(--muted); min-height: 60px; }
+.workspace-sidebar nav { display: flex; flex-direction: column; gap: 6px; }
+.workspace-sidebar nav a { display: flex; gap: 12px; align-items: center; padding: 10px 12px; border-radius: 8px; text-decoration: none; color: var(--muted); min-height: 52px; }
 .workspace-sidebar nav strong { display: block; font-size: 14px; color: var(--ink); }
 .workspace-sidebar nav small { display: block; font-size: 12px; }
 .workspace-sidebar nav a:hover, .workspace-sidebar nav a.nav-selected { color: var(--brand-hover); background: var(--brand-soft); }
@@ -221,6 +221,24 @@ progress { accent-color: var(--brand); width: 100%; height: 8px; display: block;
 .taxonomy-list .badge { justify-self: start; }
 @media(min-width:1280px) { .candidate-review-workspace { grid-template-columns: minmax(0,1fr) minmax(0,.95fr); align-items: start; } }
 @media(max-width:767px) { input:not([type="checkbox"]), select, textarea { font-size: 16px; } }
+
+/* Phase 5: keep the small-screen header compact; reveal navigation on demand. */
+.mobile-menu-toggle { display: none; }
+@media(max-width:767px) {
+  .workspace-sidebar { display: grid; grid-template-columns: minmax(0,1fr) auto; align-items: center; gap: 12px; padding: 12px 16px; }
+  .workspace-brand { align-items: center; min-width: 0; margin: 0; gap: 10px; }
+  .workspace-brand h1 { font-size: 14px; }
+  .workspace-brand p { font-size: 11px; }
+  .brand-mark { width: 32px; height: 32px; }
+  .mobile-menu-toggle { display: inline-flex; align-items: center; justify-content: center; min-height: 44px; padding: 8px 12px; font-size: 13px; }
+  .workspace-sidebar .nav-caption { display: none; }
+  .workspace-sidebar nav { display: none; grid-column: 1/-1; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 8px; }
+  .workspace-sidebar.mobile-menu-open nav { display: grid; }
+  .workspace-sidebar nav a { padding: 8px 10px; min-height: 44px; gap: 8px; }
+  .workspace-sidebar nav .workspace-icon { width: 18px; height: 18px; }
+  .workspace-sidebar nav strong { font-size: 13px; }
+  .workspace-connection { grid-column: 1/-1; margin: 0; padding: 0; border: 0; font-size: 12px; }
+}
 
 /* Task 6: focus the work area, keep evidence close, reveal secondary tools. */
 .success-banner,.canonical-banner { display:flex; flex-wrap:wrap; align-items:center; gap:8px 16px; padding:14px 18px; border-radius:8px; margin-bottom:16px; font-size:13px; }

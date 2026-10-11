@@ -1,4 +1,3 @@
-import { defineComponent, h } from "vue";
 import { createRouter, createWebHistory, type RouterHistory } from "vue-router";
 import TaxonomyPage from "../pages/TaxonomyPage.vue";
 import QuestionBankPage from "../pages/QuestionBankPage.vue";
@@ -11,19 +10,15 @@ import ProjectDetailPage from "../pages/ProjectDetailPage.vue";
 import MaterialsPage from "../pages/MaterialsPage.vue";
 import SettingsPage from "../pages/SettingsPage.vue";
 import InboxPage from "../pages/InboxPage.vue";
-
-const HomePlaceholder = defineComponent({
-  name: "HomePlaceholder",
-  setup() {
-    return () => h("section", { "aria-label": "题库" }, [h("p", "题库页面即将启用")]);
-  },
-});
+import DashboardPage from "../pages/DashboardPage.vue";
 
 export function createAppRouter(history: RouterHistory = createWebHistory()) {
   return createRouter({
     history,
     routes: [
-      { path: "/", name: "home", component: QuestionBankPage },
+      { path: "/", name: "home", redirect: "/dashboard" },
+      { path: "/dashboard", name: "dashboard", component: DashboardPage },
+      { path: "/questions", name: "question-bank", component: QuestionBankPage },
       { path: "/questions/:id", name: "question-detail", component: QuestionDetailPage },
       { path: "/taxonomy", name: "taxonomy", component: TaxonomyPage },
       { path: "/inbox", name: "inbox", component: InboxPage },
