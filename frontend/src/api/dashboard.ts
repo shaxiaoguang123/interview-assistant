@@ -43,6 +43,9 @@ export interface DashboardData {
   as_of: string;
   due_question_count: number;
   pending_candidate_count: number;
+  active_question_count: number;
+  practice_session_count: number;
+  unfinished_session: DashboardSession | null;
   active_project_count: number;
   recent_answers: DashboardAnswer[];
   recent_sessions: DashboardSession[];

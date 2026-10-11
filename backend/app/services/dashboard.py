@@ -40,6 +40,13 @@ def get_dashboard(session: Session) -> dict:
             Question.archived_at.is_(None),
         )
     ) or 0
+    active_question_count = session.scalar(
+        select(func.count()).select_from(Question).where(
+            Question.status == "active",
+            Question.merged_into_question_id.is_(None),
+            Question.archived_at.is_(None),
+        )
+    ) or 0
 
     recent_answers = []
     answers = list(session.scalars(
@@ -87,6 +94,14 @@ def get_dashboard(session: Session) -> dict:
             "item_count": total,
             "completed_count": completed,
         })
+    unfinished_session = next(
+        (
+            item for item in recent_sessions
+            if item["completed_at"] is None and item["item_count"] > item["completed_count"]
+        ),
+        None,
+    )
+    practice_session_count = session.scalar(select(func.count()).select_from(PracticeSession)) or 0
 
     active_projects = session.scalar(select(func.count()).select_from(Project).where(
         Project.is_active.is_(True), Project.archived_at.is_(None)
@@ -124,6 +139,9 @@ def get_dashboard(session: Session) -> dict:
         "as_of": now.isoformat(),
         "due_question_count": int(due_count),
         "pending_candidate_count": int(pending_count),
+        "active_question_count": int(active_question_count),
+        "practice_session_count": int(practice_session_count),
+        "unfinished_session": unfinished_session,
         "active_project_count": int(active_projects),
         "recent_answers": recent_answers,
         "recent_sessions": recent_sessions,

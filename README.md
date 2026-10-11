@@ -94,6 +94,25 @@ conda run -n test python -m pip install -r backend/requirements.txt
 npm --prefix frontend install
 ```
 
+## macOS 一键启动
+
+在 macOS 首次使用时，先双击仓库根目录的 **Set up Agent Interview Assistant.command**。它会使用 Python 3.12 创建 `backend/.venv`、安装后端依赖、安装 Node/npm 依赖并构建 Vue 静态页面；日常使用不启动 Vite，也不需要 Conda。之后双击 **Launch Agent Interview Assistant.command**，等待浏览器打开本机工作台；结束时双击 **Stop Agent Interview Assistant.command**。
+
+安装需要 Python 3.12、Node.js 和 npm。缺少 Python 或 Node 时，安装器会显示 Homebrew 安装提示。安装器不会下载 OCR 模型；未安装 OCR 模型时，题库、练习、项目和备份仍可使用，设置页会显示 OCR 状态。没有配置 LLM Provider 也不影响其他功能。
+
+首次启动会自动初始化 SQLite。已有数据库需要迁移时，启动器会显示当前/目标版本，要求输入明确确认语，并先用 SQLite Online Backup API 将数据库快照保存到应用数据目录的 `migration-backups/`；迁移不覆盖截图和资料文件。拒绝确认会停止启动且不改动数据库。完整数据备份仍可在设置页导出 ZIP。
+
+启动器始终调用 `backend/run.py`，服务只监听 `127.0.0.1`，保持单进程且关闭自动重载。重复双击会连接已运行实例，不创建第二个服务。端口被占用时会提示，不会终止占用者。停止入口只会向带有本机启动器身份标记的应用进程发送正常关闭信号；手动启动的服务不会被它停止。数据库、Provider 配置、OCR 模型和日志都会保留。
+
+如需查看诊断，在终端运行：
+
+```bash
+cd backend
+./.venv/bin/python -m app.maintenance doctor
+```
+
+诊断会显示 Python、前端构建、数据库迁移、OCR 模型校验、LLM 配置和数据目录类型；不会输出 API Key 或完整数据路径。只读状态接口为 `GET /api/v1/system/status`。
+
 ## 本机开发运行
 
 Phase 1B 使用 RapidOCR + ONNX Runtime CPU 进行本地 OCR。Flask 必须以单进程入口启动；请勿用 Flask CLI 或自动重载模式运行，否则重载子进程可能把仍在运行的任务误判为中断。

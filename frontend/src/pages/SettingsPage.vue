@@ -3,6 +3,7 @@ import { onBeforeUnmount, onMounted, shallowRef } from "vue";
 import { ApiError } from "../api/client";
 import { getLLMConfig, saveLLMConfig, testLLMConnection, type LLMConfig } from "../api/assistant";
 import BackupSettingsPanel from "../components/settings/BackupSettingsPanel.vue";
+import SystemStatusPanel from "../components/system/SystemStatusPanel.vue";
 
 const settings = shallowRef<LLMConfig | null>(null);
 const baseUrl = shallowRef("");
@@ -115,6 +116,7 @@ onBeforeUnmount(() => { alive = false; apiKey.value = ""; });
   <section aria-labelledby="settings-title" class="settings-page">
     <header class="page-heading"><div><span class="eyebrow">本机偏好</span><h2 id="settings-title">设置</h2><p>管理模型连接，并将题库、练习历史、截图和个人资料备份到 ZIP 文件。</p></div><span class="badge" :class="{ accent: connected }">{{ connected ? '连接已验证' : settings?.configured ? '模型已配置' : '模型尚未配置' }}</span></header>
 
+    <SystemStatusPanel />
     <div class="settings-grid">
       <form class="panel llm-form" aria-label="模型配置" @submit.prevent="save">
         <header><div><span class="eyebrow">可选功能</span><h3>连接模型 Provider</h3></div><span v-if="settings" class="badge">{{ settings.configuration_scope === 'environment' ? '使用环境配置' : settings.configuration_scope === 'local' ? '使用本机配置' : '未配置' }}</span></header>
@@ -136,5 +138,5 @@ LLM_MODEL=gpt-6-luna</pre><h4>数据与隐私</h4><p class="helper">应用数据
 </template>
 
 <style scoped>
-.settings-grid{display:grid;grid-template-columns:minmax(0,1.05fr) minmax(300px,.8fr);gap:24px;align-items:start}.llm-form{display:grid;gap:17px}.llm-form>header{display:flex;align-items:center;justify-content:space-between;gap:12px}.llm-form h3,.settings-help h3{font-size:18px;margin:4px 0}.llm-form label{display:grid;gap:5px}.llm-form label small{font-size:12px;color:var(--muted)}.llm-form>p{margin:0}.settings-data-dir code{overflow-wrap:anywhere}.settings-help p{overflow-wrap:anywhere}.settings-help pre{margin:18px 0;padding:14px;background:#f0f3f7;border-radius:8px;overflow:auto;white-space:pre;line-height:1.6;font-size:12px}.settings-help h4{margin:20px 0 6px}.settings-error{color:var(--danger)}@media(max-width:1000px){.settings-grid{grid-template-columns:1fr}}@media(max-width:767px){.llm-form .action-row{align-items:stretch;flex-direction:column}.llm-form .action-row button{width:100%}}
+.settings-page>.system-status{margin-bottom:20px}.settings-grid{display:grid;grid-template-columns:minmax(0,1.05fr) minmax(300px,.8fr);gap:24px;align-items:start}.llm-form{display:grid;gap:17px}.llm-form>header{display:flex;align-items:center;justify-content:space-between;gap:12px}.llm-form h3,.settings-help h3{font-size:18px;margin:4px 0}.llm-form label{display:grid;gap:5px}.llm-form label small{font-size:12px;color:var(--muted)}.llm-form>p{margin:0}.settings-data-dir code{overflow-wrap:anywhere}.settings-help p{overflow-wrap:anywhere}.settings-help pre{margin:18px 0;padding:14px;background:#f0f3f7;border-radius:8px;overflow:auto;white-space:pre;line-height:1.6;font-size:12px}.settings-help h4{margin:20px 0 6px}.settings-error{color:var(--danger)}@media(max-width:1000px){.settings-grid{grid-template-columns:1fr}}@media(max-width:767px){.llm-form .action-row{align-items:stretch;flex-direction:column}.llm-form .action-row button{width:100%}}
 </style>
