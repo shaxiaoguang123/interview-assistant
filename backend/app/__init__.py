@@ -18,9 +18,11 @@ from .api.v1.materials import blueprint as materials_blueprint
 from .api.v1.assistant import blueprint as assistant_blueprint
 from .api.v1.backups import blueprint as backups_blueprint
 from .api.v1.dashboard import blueprint as dashboard_blueprint
+from .api.v1.mock_interviews import blueprint as mock_interviews_blueprint
 from .api.v1.system import blueprint as system_blueprint
 from .services.assistant import init_assistant
 from .services.provider_settings import load_local_provider_settings
+from .services.mock_interviews import init_mock_interviews
 from .config import Config
 from .db import init_db
 from .errors import register_error_handlers
@@ -53,6 +55,7 @@ def create_app(test_config: dict | None = None) -> Flask:
     explicit_provider = set(test_config or {}) & {"LLM_BASE_URL", "LLM_MODEL", "LLM_API_KEY"}
     load_local_provider_settings(app, explicitly_configured=explicit_provider)
     init_assistant(app)
+    init_mock_interviews(app)
     register_error_handlers(app)
     init_db(app)
     register_local_security(app)
@@ -68,6 +71,7 @@ def create_app(test_config: dict | None = None) -> Flask:
     app.register_blueprint(assistant_blueprint)
     app.register_blueprint(backups_blueprint)
     app.register_blueprint(dashboard_blueprint)
+    app.register_blueprint(mock_interviews_blueprint)
     app.register_blueprint(system_blueprint)
     _register_frontend_routes(app)
     app.register_blueprint(topics_blueprint)
