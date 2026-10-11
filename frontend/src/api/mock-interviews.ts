@@ -39,6 +39,7 @@ export interface MockInterviewSource {
 }
 
 export interface MockInterviewTurn {
+  id?: number;
   ordinal: number;
   question_id: number;
   question_text: string;
@@ -46,6 +47,38 @@ export interface MockInterviewTurn {
   text: string;
   sources: MockInterviewSource[];
   created_at: string;
+  answer_export?: MockInterviewAnswerExport | null;
+}
+
+export interface MockInterviewAnswerExport {
+  saved_answer_id: number;
+  saved_answer_version_id: number;
+  version_no: number;
+  question_id: number;
+  self_rating: number | null;
+  created_at: string | null;
+}
+
+export interface MockInterviewAnswerSource {
+  mock_interview_id: number;
+  mock_interview_title: string;
+  turn_id: number;
+  question_id: number;
+  question_text: string;
+}
+
+export interface MockInterviewAnswerExportResult {
+  saved_answer: { id: number; question_id: number; is_pinned: boolean; archived_at: string | null };
+  version: {
+    id: number;
+    saved_answer_id: number;
+    version_no: number;
+    content: string;
+    self_rating: number | null;
+    origin_kind: string;
+  };
+  source: MockInterviewAnswerSource;
+  already_exported: boolean;
 }
 
 export interface MockInterviewSummary {
@@ -130,3 +163,11 @@ export const saveMockInterview = (id: string, title: string) =>
   request<{ record: SavedMockInterview }>(`/api/v1/mock-interviews/${id}/save`, json("POST", { title }));
 export const listSavedMockInterviews = () => request<SavedMockInterview[]>("/api/v1/mock-interviews/saved");
 export const getSavedMockInterview = (id: number) => request<SavedMockInterview>(`/api/v1/mock-interviews/saved/${id}`);
+export const exportMockInterviewAnswer = (
+  recordId: number,
+  turnId: number,
+  payload: { save_mode: "new_answer" | "append_version"; saved_answer_id?: number; content: string; self_rating: number | null },
+) => request<MockInterviewAnswerExportResult>(
+  `/api/v1/mock-interviews/saved/${recordId}/answers/${turnId}/export`,
+  json("POST", payload),
+);

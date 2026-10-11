@@ -2,7 +2,15 @@
 import { RouterLink } from "vue-router";
 import type { MockInterviewSummary } from "../../api/mock-interviews";
 
-defineProps<{ summary: MockInterviewSummary }>();
+const props = withDefaults(defineProps<{
+  summary: MockInterviewSummary;
+  questionStates?: Record<number, { is_wrong: boolean; writable: boolean }>;
+  markingQuestionIds?: number[];
+}>(), { questionStates: () => ({}), markingQuestionIds: () => [] });
+const emit = defineEmits<{ markWrong: [questionId: number] }>();
+const isWrong = (id: number) => props.questionStates[id]?.is_wrong === true;
+const isWritable = (id: number) => props.questionStates[id]?.writable === true;
+const isMarking = (id: number) => props.markingQuestionIds.includes(id);
 </script>
 
 <template>
@@ -16,12 +24,14 @@ defineProps<{ summary: MockInterviewSummary }>();
         <div v-if="item.missing_points.length"><strong>可补充的知识点</strong><ul><li v-for="point in item.missing_points" :key="point">{{ point }}</li></ul></div>
         <div v-if="item.technical_concerns.length"><strong>建议核对的技术表述</strong><ul><li v-for="point in item.technical_concerns" :key="point">{{ point }}</li></ul></div>
         <div v-if="item.next_directions.length"><strong>可以继续深入</strong><ul><li v-for="point in item.next_directions" :key="point">{{ point }}</li></ul></div>
+        <div class="summary-question-actions"><RouterLink :to="`/questions/${item.question_id}`">查看原题</RouterLink><button v-if="isWritable(item.question_id)" type="button" :disabled="isWrong(item.question_id) || isMarking(item.question_id)" @click="emit('markWrong', item.question_id)">{{ isWrong(item.question_id) ? "已标记为错题" : isMarking(item.question_id) ? "正在更新…" : "标记为错题" }}</button><span v-else class="helper">{{ props.questionStates[item.question_id] ? "原题不可写" : "正在核对原题…" }}</span></div>
       </article>
     </div>
     <section v-if="summary.recommendations.length" class="mock-recommendations" aria-label="推荐复习的题目">
       <h4>推荐继续复习的原题</h4>
-      <ul><li v-for="item in summary.recommendations" :key="item.question_id"><RouterLink :to="`/questions/${item.question_id}`">{{ item.question_text }}</RouterLink><span>{{ item.reason }}</span></li></ul>
+      <ul><li v-for="item in summary.recommendations" :key="item.question_id"><RouterLink :to="`/questions/${item.question_id}`">{{ item.question_text }}</RouterLink><span>{{ item.reason }}</span><div class="summary-question-actions"><RouterLink :to="`/questions/${item.question_id}`">查看原题</RouterLink><button v-if="isWritable(item.question_id)" type="button" :disabled="isWrong(item.question_id) || isMarking(item.question_id)" @click="emit('markWrong', item.question_id)">{{ isWrong(item.question_id) ? "已标记为错题" : isMarking(item.question_id) ? "正在更新…" : "标记为错题" }}</button><span v-else class="helper">{{ props.questionStates[item.question_id] ? "原题不可写" : "正在核对原题…" }}</span></div></li></ul>
     </section>
+    <RouterLink class="wrong-practice-link" to="/practice?mode=wrong">开始错题练习</RouterLink>
     <p class="helper">建议由模型生成，不会修改题目评分、练习掌握度或复习日期。</p>
   </section>
 </template>
@@ -40,5 +50,8 @@ defineProps<{ summary: MockInterviewSummary }>();
 .mock-recommendations h4 { margin-bottom: 8px; }
 .mock-recommendations li { margin-bottom: 8px; }
 .mock-recommendations span { display: block; color: var(--muted); font-size: 13px; }
+.summary-question-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; margin-top: 10px; font-size: 13px; }
+.summary-question-actions button { padding: 6px 10px; }
+.wrong-practice-link { justify-self: start; font-weight: 650; }
 .mock-summary > .helper { margin: 0; }
 </style>
