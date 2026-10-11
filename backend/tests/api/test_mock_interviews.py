@@ -1,3 +1,6 @@
+import threading
+import time
+
 from app.models.practice import PracticeReview, PracticeSession
 from app.models.material import Material, MaterialChunk, MaterialVersion, Project
 from app.models.mock_interview import MockInterviewSession, MockInterviewTurn
@@ -44,6 +47,20 @@ class FakeProvider:
         if isinstance(reply, Exception):
             raise reply
         return reply
+
+
+class BlockingProvider(FakeProvider):
+    def __init__(self, reply):
+        super().__init__([reply])
+        self.entered = threading.Event()
+        self.release = threading.Event()
+
+    def complete(self, messages):
+        self.calls.append(messages)
+        self.entered.set()
+        if not self.release.wait(timeout=10):
+            raise TimeoutError("test provider was not released")
+        return self.replies.pop(0)
 
 
 def _create_mock_interview(client, question_count=1, context=None):
@@ -219,3 +236,138 @@ def test_stale_revision_does_not_duplicate_or_overwrite_answer(client, app):
     assert stale.get_json()["error"]["code"] == "CONFLICT"
     current = client.get(f"/api/v1/mock-interviews/{session_id}").get_json()
     assert [turn["text"] for turn in current["turns"] if turn["kind"] == "answer"] == ["Use reciprocal rank fusion."]
+
+
+def test_busy_follow_up_does_not_append_second_answer(client, app):
+    _create_question(client, "LangGraph checkpointer 的作用是什么？")
+    fake = BlockingProvider("thread_id 如何隔离不同用户的状态？")
+    app.config["LLM_PROVIDER_FACTORY"] = lambda _config: fake
+    created = _create_mock_interview(client)
+    session_id = created.get_json()["id"]
+    result = {}
+
+    def make_first_request():
+        with app.test_client() as thread_client:
+            response = thread_client.post(
+                f"/api/v1/mock-interviews/{session_id}/follow-up",
+                json={"answer": "先持久化状态，再从检查点恢复。", "expected_revision": 0},
+            )
+            result["first_status"] = response.status_code
+
+    worker = threading.Thread(target=make_first_request)
+    worker.start()
+    assert fake.entered.wait(timeout=5)
+    busy_state = client.get(f"/api/v1/mock-interviews/{session_id}").get_json()
+    second = client.post(
+        f"/api/v1/mock-interviews/{session_id}/follow-up",
+        json={"answer": "This answer must not be appended.", "expected_revision": busy_state["revision"]},
+    )
+    fake.release.set()
+    worker.join(timeout=10)
+
+    assert result["first_status"] == 200
+    assert second.status_code == 409
+    assert second.get_json()["error"]["code"] == "MOCK_INTERVIEW_BUSY"
+    current = client.get(f"/api/v1/mock-interviews/{session_id}").get_json()
+    assert [turn["text"] for turn in current["turns"] if turn["kind"] == "answer"] == [
+        "先持久化状态，再从检查点恢复。"
+    ]
+    assert current["revision"] == 2
+
+
+def test_save_is_rejected_while_summary_is_generating(client, app):
+    _create_question(client, "MCP 工具发现如何工作？")
+    summary_json = (
+        '{"overview":"回答覆盖了基础。","items":[{"question_ordinal":1,'
+        '"answer_summary":"说明了工具发现。","missing_points":[],"technical_concerns":[],'
+        '"next_directions":["比较不同传输方式"]}],"recommendations":[]}'
+    )
+    fake = BlockingProvider(summary_json)
+    app.config["LLM_PROVIDER_FACTORY"] = lambda _config: fake
+    created = _create_mock_interview(client)
+    session_id = created.get_json()["id"]
+    ended = client.post(
+        f"/api/v1/mock-interviews/{session_id}/finish",
+        json={"answer": "MCP 提供统一的工具发现接口。", "expected_revision": 0},
+    )
+    assert ended.status_code == 200
+    result = {}
+
+    def generate():
+        with app.test_client() as thread_client:
+            response = thread_client.post(f"/api/v1/mock-interviews/{session_id}/summary", json={})
+            result["summary_status"] = response.status_code
+
+    worker = threading.Thread(target=generate)
+    worker.start()
+    assert fake.entered.wait(timeout=5)
+    saving = client.post(f"/api/v1/mock-interviews/{session_id}/save", json={"title": "Concurrency check"})
+    fake.release.set()
+    worker.join(timeout=10)
+
+    assert saving.status_code == 409
+    assert saving.get_json()["error"]["code"] == "MOCK_INTERVIEW_BUSY"
+    assert result["summary_status"] == 200
+    saved = client.post(f"/api/v1/mock-interviews/{session_id}/save", json={"title": "Concurrency check"})
+    assert saved.status_code == 201
+    assert saved.get_json()["record"]["summary"]["overview"] == "回答覆盖了基础。"
+
+
+def test_cache_evicts_saved_sessions_but_keeps_saved_history(client, app):
+    from app.services.mock_interviews import TEMP_SESSION_LIMIT
+
+    _create_question(client, "Agent 系统设计题")
+    ids = []
+    saved_record_id = None
+    for index in range(TEMP_SESSION_LIMIT):
+        created = _create_mock_interview(client)
+        assert created.status_code == 201
+        session_id = created.get_json()["id"]
+        ids.append(session_id)
+        if index == 0:
+            ended = client.post(
+                f"/api/v1/mock-interviews/{session_id}/finish",
+                json={"answer": "一个合成答案。", "expected_revision": 0},
+            )
+            assert ended.status_code == 200
+            saved = client.post(f"/api/v1/mock-interviews/{session_id}/save", json={})
+            assert saved.status_code == 201
+            saved_record_id = saved.get_json()["record"]["id"]
+
+    extra = _create_mock_interview(client)
+
+    assert extra.status_code == 201
+    assert client.get(f"/api/v1/mock-interviews/{ids[0]}").status_code == 404
+    assert client.get(f"/api/v1/mock-interviews/saved/{saved_record_id}").status_code == 200
+    assert all(client.get(f"/api/v1/mock-interviews/{session_id}").status_code == 200 for session_id in ids[1:])
+
+
+def test_cache_refuses_to_evict_unexpired_unsaved_sessions(client):
+    from app.services.mock_interviews import TEMP_SESSION_LIMIT
+
+    _create_question(client, "Agent 可靠性题")
+    ids = [_create_mock_interview(client).get_json()["id"] for _ in range(TEMP_SESSION_LIMIT)]
+
+    rejected = _create_mock_interview(client)
+
+    assert rejected.status_code == 503
+    assert rejected.get_json()["error"]["code"] == "MOCK_INTERVIEW_CAPACITY"
+    assert all(client.get(f"/api/v1/mock-interviews/{session_id}").status_code == 200 for session_id in ids)
+
+
+def test_expired_in_flight_session_is_not_purged(client, app):
+    from app.services.mock_interviews import TEMP_SESSION_TTL_SECONDS
+
+    _create_question(client, "Agent state recovery")
+    created = _create_mock_interview(client)
+    session_id = created.get_json()["id"]
+    cache = app.extensions["mock_interview_sessions"]
+    with app.extensions["mock_interview_lock"]:
+        cache[session_id]["generating"] = True
+        cache[session_id]["generation_token"] = "in-flight-test"
+        cache[session_id]["last_active_monotonic"] = time.monotonic() - TEMP_SESSION_TTL_SECONDS - 1
+
+    response = client.get(f"/api/v1/mock-interviews/{session_id}")
+
+    assert response.status_code == 200
+    assert response.get_json()["id"] == session_id

@@ -62,8 +62,23 @@ def _provider_is_configured() -> bool:
 def _purge_expired(cache: OrderedDict) -> None:
     now = time.monotonic()
     for session_id in list(cache):
-        if now - cache[session_id]["last_active_monotonic"] > TEMP_SESSION_TTL_SECONDS:
+        state = cache[session_id]
+        if state.get("generating"):
+            continue
+        if now - state["last_active_monotonic"] > TEMP_SESSION_TTL_SECONDS:
             cache.pop(session_id, None)
+
+
+def _make_cache_room(cache: OrderedDict) -> None:
+    """Evict saved transcripts first; never silently evict a live unsaved interview."""
+    if len(cache) < TEMP_SESSION_LIMIT:
+        return
+    for session_id in list(cache):
+        state = cache[session_id]
+        if state.get("saved_record_id") is not None and not state.get("generating"):
+            cache.pop(session_id, None)
+            if len(cache) < TEMP_SESSION_LIMIT:
+                return
 
 
 def _lookup(session_id: str) -> dict:
@@ -230,6 +245,7 @@ def start(session, payload: object) -> dict:
     cache = current_app.extensions["mock_interview_sessions"]
     with current_app.extensions["mock_interview_lock"]:
         _purge_expired(cache)
+        _make_cache_room(cache)
         if len(cache) >= TEMP_SESSION_LIMIT:
             raise _error(503, "MOCK_INTERVIEW_CAPACITY", "临时模拟面试数量已满，请先保存或结束已有会话。")
         cache[draft_key] = state
@@ -393,8 +409,8 @@ def follow_up(session, session_id: str, payload: object) -> dict:
         state = _lookup(session_id)
         _validate_revision(payload["expected_revision"], state["revision"])
         question = deepcopy(state["questions"][state["current_index"]])
-        _append_answer(state, answer)
         token = _reserve_generation(state)
+        _append_answer(state, answer)
         snapshot = deepcopy(state)
         revision = state["revision"]
 
@@ -418,7 +434,12 @@ def follow_up(session, session_id: str, payload: object) -> dict:
 
     with current_app.extensions["mock_interview_lock"]:
         current = cache.get(session_id)
-        if current is None or current.get("generation_token") != token or current["revision"] != revision:
+        if current is None or current.get("generation_token") != token:
+            raise _error(409, "CONFLICT", "模拟面试内容在生成期间发生变化，请重新读取后再试。")
+        if current["revision"] != revision:
+            current["generating"] = False
+            current["generation_token"] = None
+            current["last_active_monotonic"] = time.monotonic()
             raise _error(409, "CONFLICT", "模拟面试内容在生成期间发生变化，请重新读取后再试。")
         current["turns"].append(
             {
@@ -700,6 +721,8 @@ def save(session, session_id: str, payload: object) -> dict:
     cache = current_app.extensions["mock_interview_sessions"]
     with current_app.extensions["mock_interview_lock"]:
         state = _lookup(session_id)
+        if state["generating"]:
+            raise _error(409, "MOCK_INTERVIEW_BUSY", "模型正在处理本轮内容，请等待完成。")
         if not state["ended"]:
             raise _error(409, "MOCK_INTERVIEW_ACTIVE", "请先结束本场模拟面试，再保存记录。")
         saved_id = state["saved_record_id"]
