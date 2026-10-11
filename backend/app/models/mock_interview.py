@@ -77,3 +77,24 @@ class MockInterviewTurn(Base):
     )
 
     session: Mapped[MockInterviewSession] = relationship(back_populates="turns")
+
+
+class MockInterviewAnswerExport(Base):
+    """Stable provenance from a saved interview answer to an immutable answer version."""
+
+    __tablename__ = "mock_interview_answer_export"
+    __table_args__ = (
+        UniqueConstraint("mock_interview_turn_id", name="uq_mock_interview_answer_export_turn"),
+        UniqueConstraint("saved_answer_version_id", name="uq_mock_interview_answer_export_version"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    mock_interview_turn_id: Mapped[int] = mapped_column(
+        ForeignKey("mock_interview_turn.id", ondelete="RESTRICT"), nullable=False
+    )
+    saved_answer_version_id: Mapped[int] = mapped_column(
+        ForeignKey("saved_answer_version.id", ondelete="RESTRICT"), nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now, server_default=func.current_timestamp()
+    )

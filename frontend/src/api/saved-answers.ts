@@ -4,6 +4,10 @@ export interface AnswerVersion {
   id:number; saved_answer_id:number; version_no:number; content:string; self_rating:number|null;
   self_rating_updated_at:string|null; origin_kind:string; source_session_item_id:number|null;
   source_practice_review_id:number|null; based_on_version_id:number|null; assistant_output_id:number|null; created_at:string;
+  mock_interview_source?:MockInterviewAnswerSource|null;
+}
+export interface MockInterviewAnswerSource {
+  mock_interview_id:number; mock_interview_title:string; turn_id:number; question_id:number; question_text:string;
 }
 export interface SavedAnswer {
   id:number; question_id:number; source_session_item_id:number|null; is_pinned:boolean;
