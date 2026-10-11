@@ -313,6 +313,7 @@ def patch_ingestion_candidate(
     allowed = {
         "expected_revision",
         "text",
+        "difficulty",
         "topic_ids",
         "tag_ids",
         "source_locator_corrections",
@@ -381,6 +382,18 @@ def patch_ingestion_candidate(
             )
             if prepared_text == current_text and candidate.search_text == prepared_text[1]:
                 prepared_text = None
+        difficulty_changed = False
+        difficulty = candidate.difficulty
+        if "difficulty" in payload:
+            requested_difficulty = payload["difficulty"]
+            if requested_difficulty is not None and (
+                not isinstance(requested_difficulty, str)
+                or requested_difficulty not in {"easy", "medium", "hard"}
+            ):
+                raise _validation("difficulty", "Must be easy, medium, hard, or null")
+            if requested_difficulty != candidate.difficulty:
+                difficulty = requested_difficulty
+                difficulty_changed = True
         parsed_corrections = [
             (source, locator)
             for source, locator in parsed_corrections
@@ -388,7 +401,13 @@ def patch_ingestion_candidate(
             and not (source.locator_correction_json is None and locator == source.locator_json)
         ]
 
-        if prepared_text is None and topics is None and tags is None and not parsed_corrections:
+        if (
+            prepared_text is None
+            and not difficulty_changed
+            and topics is None
+            and tags is None
+            and not parsed_corrections
+        ):
             return question_repository.get_question(session, candidate_id)
 
         text_changed = prepared_text is not None
@@ -397,6 +416,8 @@ def patch_ingestion_candidate(
         if prepared_text is not None:
             candidate.text, candidate.normalized_text, candidate.normalized_hash = prepared_text
             candidate.search_text = candidate.normalized_text
+        if difficulty_changed:
+            candidate.difficulty = difficulty
         if topics is not None:
             question_repository.replace_question_topics(
                 session, candidate.id, [topic.id for topic in topics]

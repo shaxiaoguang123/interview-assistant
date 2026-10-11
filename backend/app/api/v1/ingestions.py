@@ -25,6 +25,7 @@ from app.services.ingestion import (
     ingestion_job_json,
     run_ingestion,
 )
+from app.services.ingestion_ai import generate_candidate_suggestions
 
 
 blueprint = Blueprint("ingestions_v1", __name__, url_prefix="/api/v1")
@@ -75,6 +76,7 @@ def _candidate_json(candidate, child_ids: list[int], source_asset_id: int) -> di
     return {
         "id": candidate.id,
         "text": candidate.text,
+        "difficulty": candidate.difficulty,
         "status": candidate.status,
         "archived_at": candidate.archived_at.isoformat() if candidate.archived_at else None,
         "candidate_state": candidate.ingestion_candidate_state,
@@ -220,6 +222,14 @@ def patch_candidate(candidate_id: int):
             [candidate_id],
         )["candidates"][0]
     )
+
+
+@blueprint.post("/ingestion-candidates/<int:candidate_id>/ai-suggestions")
+def post_candidate_ai_suggestions(candidate_id: int):
+    result = generate_candidate_suggestions(
+        get_session(), candidate_id, request.get_json(silent=True)
+    )
+    return jsonify(result)
 
 
 @blueprint.post("/ingestions/<int:job_id>/candidates/<int:candidate_id>/split")
