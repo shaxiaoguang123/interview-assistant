@@ -15,15 +15,15 @@ const q=(id:number,text:string)=>({id,text,topics:[],tags:[],state:{is_favorite:
 const session=(id:number)=>({id,mode:'random',items:[{id:id*10,question_id:id,ordinal:1,status:'shown',question:{id,text:`Session question ${id}`,status:'active',archived_at:null}}],completed_at:null});
 
 describe('professional workspace behaviors',()=>{
-  it('has nine semantic navigation links, selected state, local health and a skip link',async()=>{
+  it('has ten semantic navigation links, selected state, local health and a skip link',async()=>{
     vi.stubGlobal('fetch',vi.fn(async(input:RequestInfo|URL)=>String(input).endsWith('/health')?json({status:'ok'}):String(input)==='/api/v1/dashboard'?json({due_question_count:0,pending_candidate_count:0,active_project_count:0,recent_answers:[],recent_sessions:[],recent_materials:[],recent_ai_outputs:[],as_of:'2026-10-11T00:00:00Z'}):json([])));
     const router=createAppRouter(createMemoryHistory());await router.push('/');await router.isReady();
     const wrapper=mount(App,{global:{plugins:[router]}});await flushPromises();
     expect(wrapper.text()).toContain('Agent Interview Workspace');
     expect(wrapper.find('a[href="#workspace-content"]').exists()).toBe(true);
-    const nav=wrapper.get('nav[aria-label="主导航"]');expect(nav.findAll('a')).toHaveLength(9);
+    const nav=wrapper.get('nav[aria-label="主导航"]');expect(nav.findAll('a')).toHaveLength(10);
     expect(nav.get('a[href="/dashboard"]').attributes('aria-current')).toBe('page');
-    expect(nav.findAll('svg[aria-hidden="true"]')).toHaveLength(9);
+    expect(nav.findAll('svg[aria-hidden="true"]')).toHaveLength(10);
     await nav.get('a[href="/practice"]').trigger('click');await flushPromises();
     expect(nav.get('a[href="/practice"]').attributes('aria-current')).toBe('page');
     expect(wrapper.text()).toContain('后端已连接');
