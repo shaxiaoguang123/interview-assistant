@@ -3,13 +3,14 @@ from .question import Question, QuestionRelation, QuestionState, QuestionTag, Qu
 from .ingestion import IngestionJob, OCRBlock, QuestionSource, QuestionSourceOCRBlock, SourceAsset
 from .taxonomy import Tag, Topic
 from .saved_answer import SavedAnswer, SavedAnswerVersion
-from .mock_interview import MockInterviewSession, MockInterviewTurn
+from .mock_interview import MockInterviewAnswerExport, MockInterviewSession, MockInterviewTurn
 
 __all__ = [
     "SavedAnswer",
     "SavedAnswerVersion",
     "MockInterviewSession",
     "MockInterviewTurn",
+    "MockInterviewAnswerExport",
     "PracticeReview",
     "PracticeSession",
     "Question",

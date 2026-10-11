@@ -2,6 +2,7 @@ from flask import Blueprint, jsonify, request
 
 from app.db import get_session
 from app.services import mock_interviews as service
+from app.services import mock_interview_exports as export_service
 
 
 blueprint = Blueprint("mock_interviews_v1", __name__, url_prefix="/api/v1")
@@ -25,6 +26,14 @@ def get_saved_list():
 @blueprint.get("/mock-interviews/saved/<int:record_id>")
 def get_saved_record(record_id: int):
     return jsonify(service.get_saved(get_session(), record_id))
+
+
+@blueprint.post("/mock-interviews/saved/<int:record_id>/answers/<int:turn_id>/export")
+def export_saved_answer(record_id: int, turn_id: int):
+    result, created = export_service.export_answer(
+        get_session(), record_id, turn_id, request.get_json(silent=True)
+    )
+    return jsonify(result), 201 if created else 200
 
 
 @blueprint.get("/mock-interviews/<string:session_id>")

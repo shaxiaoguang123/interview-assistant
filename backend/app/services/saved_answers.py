@@ -92,27 +92,50 @@ def _append(session, answer, data, *, origin_kind="user_written", based_on_versi
     return version
 
 
-def create_answer(session, question_id, payload):
+def create_answer_in_transaction(session, question_id, payload):
     data = _payload(payload)
+    question_group(session, question_id)
+    _source(session, question_id, data[2], data[3])
+    answer = SavedAnswer(question_id=question_id, source_session_item_id=data[2])
+    session.add(answer)
+    session.flush()
+    version = _append(session, answer, data)
+    return answer, version
+
+
+def append_version_in_transaction(session, answer_id, payload, *, inherit_ai_derivation=False):
+    data = _payload(payload)
+    answer = _answer(session, answer_id, True)
+    derivation = {}
+    if inherit_ai_derivation:
+        current = session.scalar(
+            select(SavedAnswerVersion)
+            .where(SavedAnswerVersion.saved_answer_id == answer.id)
+            .order_by(SavedAnswerVersion.version_no.desc())
+            .limit(1)
+        )
+        if current and current.assistant_output_id:
+            derivation = {
+                "origin_kind": "ai_assisted",
+                "based_on_version_id": current.id,
+                "assistant_output_id": current.assistant_output_id,
+            }
+    return answer, _append(session, answer, data, **derivation)
+
+
+def create_answer(session, question_id, payload):
     with session.begin():
         _begin_write(session)
-        question_group(session, question_id)
-        _source(session, question_id, data[2], data[3])
-        answer = SavedAnswer(question_id=question_id, source_session_item_id=data[2])
-        session.add(answer)
-        session.flush()
-        _append(session, answer, data)
+        answer, _version = create_answer_in_transaction(session, question_id, payload)
     return answer
 
 
 def append_version(session, answer_id, payload):
-    data = _payload(payload)
     with session.begin():
         _begin_write(session)
-        answer = _answer(session, answer_id, True)
-        current=session.scalar(select(SavedAnswerVersion).where(SavedAnswerVersion.saved_answer_id==answer.id).order_by(SavedAnswerVersion.version_no.desc()).limit(1))
-        derivation={"origin_kind":"ai_assisted","based_on_version_id":current.id,"assistant_output_id":current.assistant_output_id} if current and current.assistant_output_id else {}
-        version = _append(session, answer, data, **derivation)
+        _answer_row, version = append_version_in_transaction(
+            session, answer_id, payload, inherit_ai_derivation=True
+        )
     return version
 
 

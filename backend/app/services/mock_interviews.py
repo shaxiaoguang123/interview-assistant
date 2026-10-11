@@ -21,6 +21,7 @@ from app.models.mock_interview import MockInterviewSession, MockInterviewTurn
 from app.models.question import Question
 from app.models.taxonomy import Topic
 from app.services.llm_provider import provider
+from app.services.mock_interview_exports import exports_for_turn_ids
 from app.services.material_search import retrieve, selected_versions
 from app.services.questions import list_questions
 
@@ -680,7 +681,12 @@ def generate_summary(session, session_id: str, payload: object) -> dict:
         return {"session": _session_json(current), "summary": deepcopy(summary), "sources": deepcopy(source_refs)}
 
 
-def _saved_json(row: MockInterviewSession, *, include_turns: bool) -> dict:
+def _saved_json(
+    row: MockInterviewSession,
+    *,
+    include_turns: bool,
+    exported_turns: dict[int, dict] | None = None,
+) -> dict:
     result = {
         "id": row.id,
         "title": row.title,
@@ -697,8 +703,10 @@ def _saved_json(row: MockInterviewSession, *, include_turns: bool) -> dict:
         "model": row.model,
     }
     if include_turns:
+        exported_turns = exported_turns or {}
         result["turns"] = [
             {
+                "id": turn.id,
                 "ordinal": turn.ordinal,
                 "question_id": turn.question_id,
                 "question_text": turn.question_text_snapshot,
@@ -706,6 +714,7 @@ def _saved_json(row: MockInterviewSession, *, include_turns: bool) -> dict:
                 "text": turn.content_text,
                 "sources": turn.source_refs_json or [],
                 "created_at": turn.created_at.isoformat() if turn.created_at else None,
+                "answer_export": exported_turns.get(turn.id),
             }
             for turn in row.turns
         ]
@@ -809,6 +818,7 @@ def get_saved(session, record_id: int) -> dict:
     )
     if row is None:
         raise _error(404, "MOCK_INTERVIEW_RECORD_NOT_FOUND", "保存的模拟面试记录不存在。")
-    result = _saved_json(row, include_turns=True)
+    exported_turns = exports_for_turn_ids(session, [turn.id for turn in row.turns])
+    result = _saved_json(row, include_turns=True, exported_turns=exported_turns)
     session.rollback()
     return result
