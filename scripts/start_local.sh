@@ -115,8 +115,7 @@ printf '正在启动本机服务…\n'
 cd "$AIA_BACKEND"
 export APP_DATA_DIR APP_PORT
 export PYTHONPATH="$AIA_BACKEND${PYTHONPATH:+:$PYTHONPATH}"
-nohup "$AIA_PYTHON" "$AIA_BACKEND/run.py" "--launcher-token=$AIA_TOKEN" >> "$AIA_LOG_FILE" 2>&1 < /dev/null &
-AIA_STARTED_PID=$!
+AIA_STARTED_PID=$("$AIA_PYTHON" -m app.maintenance.launcher --launcher-token "$AIA_TOKEN" --log-file "$AIA_LOG_FILE")
 printf '%s\n' "$AIA_STARTED_PID" > "$AIA_PID_FILE.tmp"
 printf '%s\n' "$AIA_TOKEN" > "$AIA_TOKEN_FILE.tmp"
 printf '%s\n' "$AIA_PORT" > "$AIA_PORT_FILE.tmp"
