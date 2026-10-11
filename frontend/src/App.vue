@@ -13,6 +13,7 @@ const navigation = [
   {to:"/inbox",label:"截图收件箱",icon:"inbox",hint:"采集与审核"},
   {to:"/taxonomy",label:"分类管理",icon:"taxonomy",hint:"Topic 与 Tag"},
   {to:"/practice",label:"练习",icon:"practice",hint:"组织与表达"},
+  {to:"/mock-interview",label:"模拟面试",icon:"interview",hint:"AI 文本追问"},
   {to:"/progress",label:"学习进度",icon:"progress",hint:"复习与薄弱知识点"},
   {to:"/projects",label:"项目经历",icon:"projects",hint:"事实与版本"},
   {to:"/materials",label:"资料库",icon:"materials",hint:"文档与上下文"},

@@ -11,6 +11,9 @@ import MaterialsPage from "../pages/MaterialsPage.vue";
 import SettingsPage from "../pages/SettingsPage.vue";
 import InboxPage from "../pages/InboxPage.vue";
 import DashboardPage from "../pages/DashboardPage.vue";
+import MockInterviewSetupPage from "../pages/MockInterviewSetupPage.vue";
+import MockInterviewRoomPage from "../pages/MockInterviewRoomPage.vue";
+import MockInterviewSavedPage from "../pages/MockInterviewSavedPage.vue";
 
 export function createAppRouter(history: RouterHistory = createWebHistory()) {
   return createRouter({
@@ -29,6 +32,9 @@ export function createAppRouter(history: RouterHistory = createWebHistory()) {
       { path: "/progress", name: "progress", component: ProgressPage },
       { path: "/practice", name: "practice-setup", component: PracticeSetupPage },
       { path: "/practice/sessions/:id", name: "practice-session", component: PracticeSessionPage },
+      { path: "/mock-interview", name: "mock-interview", component: MockInterviewSetupPage },
+      { path: "/mock-interview/room/:sessionId", name: "mock-interview-room", component: MockInterviewRoomPage },
+      { path: "/mock-interview/saved/:id", name: "mock-interview-saved", component: MockInterviewSavedPage },
     ],
   });
 }
