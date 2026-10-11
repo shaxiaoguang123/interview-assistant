@@ -124,7 +124,7 @@ def get_system_status(app: Flask) -> dict:
     default_data_dir = Path(user_data_dir("AgentInterviewAssistant", "Local")).resolve()
     provider = public_provider_settings(app)
 
-    return {
+    result = {
         "application": "agent-interview-assistant",
         "backend": {"ready": True, "state": "ready"},
         "python": {
@@ -139,3 +139,7 @@ def get_system_status(app: Flask) -> dict:
             "location": "default" if configured_data_dir == default_data_dir else "custom",
         },
     }
+    instance_id = str(app.config.get("APP_INSTANCE_ID") or "")
+    if instance_id:
+        result["launcher"] = {"instance_id": instance_id}
+    return result

@@ -16,6 +16,7 @@ from sqlalchemy.engine import make_url
 from app import create_app
 from app.config import Config, default_data_dir
 from app.maintenance.service_lock import claim_service_lock
+from app.maintenance.instance_identity import ensure_instance_id, status_matches_instance
 from app.services.backups import BackupError, inspect_backup, restore_backup
 from app.services.system_status import get_system_status
 
@@ -35,6 +36,11 @@ def _parser() -> argparse.ArgumentParser:
     doctor = commands.add_parser("doctor", help="检查运行环境、数据库、OCR 和模型配置")
     doctor.add_argument("--json", action="store_true", help="以 JSON 输出诊断结果")
     commands.add_parser("upgrade", help="安全初始化或升级本机数据库")
+    commands.add_parser("instance-id", help="读取或创建当前本机数据目录的启动实例标识")
+    match_instance = commands.add_parser(
+        "status-matches-instance", help="检查本机服务状态是否属于当前数据目录"
+    )
+    match_instance.add_argument("--expected-id", required=True)
     return parser
 
 
@@ -187,6 +193,11 @@ def main(argv: list[str] | None = None) -> int:
             return _run_doctor(args.json)
         elif args.command == "upgrade":
             return _run_upgrade()
+        elif args.command == "instance-id":
+            print(ensure_instance_id(default_data_dir()))
+            return 0
+        elif args.command == "status-matches-instance":
+            return 0 if status_matches_instance(sys.stdin.read(100_000), args.expected_id) else 1
         else:
             confirmed = False
             if args.replace_existing:
