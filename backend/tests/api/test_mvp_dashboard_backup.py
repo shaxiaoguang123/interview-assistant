@@ -10,11 +10,13 @@ from pathlib import Path
 
 import pytest
 from PIL import Image
+from sqlalchemy import select
 from werkzeug.datastructures import FileStorage
 
 from app import create_app
 from app.models.ingestion import IngestionJob, OCRBlock, QuestionSource, QuestionSourceOCRBlock
 from app.models.question import Question, QuestionState
+from app.models.mock_interview import MockInterviewTurn
 from app.services.backups import BackupError, create_backup, inspect_backup, restore_backup
 from app.services.source_storage import save_source_file
 import app.services.backups as backups
@@ -86,6 +88,38 @@ def seed_backup_data(client, app, db_session):
     )
     assert review_response.status_code == 201, review_response.get_json()
 
+    mock_started = client.post("/api/v1/mock-interviews", json={
+        "topic_id": None,
+        "question_count": 1,
+        "context": {"project_ids": [], "material_ids": [], "exclude_material_ids": []},
+    })
+    assert mock_started.status_code == 201, mock_started.get_json()
+    mock_state = mock_started.get_json()
+    mock_finished = client.post(
+        f"/api/v1/mock-interviews/{mock_state['id']}/finish",
+        json={"answer": "Synthetic mock-interview answer for backup.", "expected_revision": mock_state["revision"]},
+    )
+    assert mock_finished.status_code == 200
+    mock_saved = client.post(f"/api/v1/mock-interviews/{mock_state['id']}/save", json={"title": "Backup mock interview"})
+    assert mock_saved.status_code == 201
+    mock_record_id = mock_saved.get_json()["record"]["id"]
+    mock_turn_id = db_session.scalar(
+        select(MockInterviewTurn.id).where(
+            MockInterviewTurn.session_id == mock_record_id,
+            MockInterviewTurn.kind == "answer",
+        )
+    )
+    mock_export = client.post(
+        f"/api/v1/mock-interviews/saved/{mock_record_id}/answers/{mock_turn_id}/export",
+        json={
+            "save_mode": "append_version",
+            "saved_answer_id": answer["id"],
+            "content": "Exported answer from mock interview.",
+            "self_rating": None,
+        },
+    )
+    assert mock_export.status_code == 201, mock_export.get_json()
+
     project_response = client.post(
         "/api/v1/projects", json={"name": "Backup Project", "summary": "Versioned project facts"}
     )
@@ -104,6 +138,9 @@ def seed_backup_data(client, app, db_session):
         "session_id": practice_session["id"],
         "session_item_id": session_item_id,
         "review_id": review_response.get_json()["id"],
+        "mock_interview_id": mock_record_id,
+        "mock_interview_turn_id": mock_turn_id,
+        "mock_export_version_id": mock_export.get_json()["version"]["id"],
         "material_id": material_response.get_json()["id"],
         "material_version_id": material_response.get_json()["current_version"]["id"],
         "source_id": source_id,
@@ -151,6 +188,12 @@ def test_backup_online_snapshot_restores_database_and_immutable_files(client, ap
             assert connection.execute("SELECT id FROM practice_session WHERE id = ?", (ids["session_id"],)).fetchone()[0] == ids["session_id"]
             assert connection.execute("SELECT id FROM session_item WHERE id = ?", (ids["session_item_id"],)).fetchone()[0] == ids["session_item_id"]
             assert connection.execute("SELECT id FROM practice_review WHERE id = ?", (ids["review_id"],)).fetchone()[0] == ids["review_id"]
+            assert connection.execute("SELECT id FROM mock_interview_session WHERE id = ?", (ids["mock_interview_id"],)).fetchone()[0] == ids["mock_interview_id"]
+            assert connection.execute("SELECT id FROM mock_interview_turn WHERE id = ?", (ids["mock_interview_turn_id"],)).fetchone()[0] == ids["mock_interview_turn_id"]
+            assert connection.execute(
+                "SELECT mock_interview_turn_id FROM mock_interview_answer_export WHERE saved_answer_version_id = ?",
+                (ids["mock_export_version_id"],),
+            ).fetchone()[0] == ids["mock_interview_turn_id"]
             assert connection.execute(
                 "SELECT id FROM material_version WHERE id = ?", (ids["material_version_id"],)
             ).fetchone()[0] == ids["material_version_id"]

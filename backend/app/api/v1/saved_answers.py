@@ -2,6 +2,7 @@ from flask import Blueprint, jsonify, request
 
 from app.db import get_session
 from app.services import saved_answers as service
+from app.services.mock_interview_exports import answer_source_for_version, answer_sources_for_versions
 
 blueprint = Blueprint("saved_answers_v1", __name__, url_prefix="/api/v1")
 
@@ -15,12 +16,38 @@ def create(question_id):
 
 @blueprint.get("/questions/<int:question_id>/saved-answers")
 def index(question_id):
-    return jsonify(service.list_answers(get_session(), question_id, request.args.get("include_archived") == "1"))
+    session = get_session()
+    answers = service.list_answers(session, question_id, request.args.get("include_archived") == "1")
+    sources = answer_sources_for_versions(
+        session, [row["current_version"]["id"] for row in answers]
+    )
+    for row in answers:
+        version_id = row["current_version"]["id"]
+        if version_id in sources:
+            row["current_version"]["mock_interview_source"] = sources[version_id]
+    return jsonify(answers)
 
 
 @blueprint.get("/saved-answers/<int:answer_id>/versions")
 def versions(answer_id):
-    return jsonify([service.version_json(v) for v in service.list_versions(get_session(), answer_id)])
+    session = get_session()
+    rows = service.list_versions(session, answer_id)
+    sources = answer_sources_for_versions(session, [row.id for row in rows])
+    return jsonify([
+        ({**service.version_json(row), "mock_interview_source": sources[row.id]}
+         if row.id in sources else service.version_json(row))
+        for row in rows
+    ])
+
+
+@blueprint.get("/saved-answer-versions/<int:version_id>/mock-interview-source")
+def mock_interview_source(version_id):
+    source = answer_source_for_version(get_session(), version_id)
+    if source is None:
+        from app.errors import ApiError
+
+        raise ApiError(404, "NOT_FOUND", "This answer version has no mock-interview source")
+    return jsonify(source)
 
 
 @blueprint.post("/saved-answers/<int:answer_id>/versions")
