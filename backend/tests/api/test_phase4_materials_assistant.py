@@ -1,6 +1,8 @@
 import io,json
 from datetime import datetime,timezone
+import pytest
 from sqlalchemy import select,func,text
+from app.errors import ApiError
 from app.models.material import Project,Material,MaterialVersion,MaterialChunk
 from app.models.assistant import AssistantOutput
 from app.models.saved_answer import SavedAnswer,SavedAnswerVersion
@@ -242,6 +244,30 @@ def test_config_and_provider_failures_never_return_secrets(client,app,monkeypatc
     def timeout(*args,**kwargs):raise TimeoutError('SECRET REQUEST')
     monkeypatch.setattr('urllib.request.urlopen',timeout)
     r=client.post('/api/v1/llm/test');assert r.status_code==504 and 'SECRET' not in r.get_data(as_text=True)
+
+
+def test_provider_accepts_larger_structured_output_limit_and_reports_truncation(monkeypatch):
+    from app.services.llm_provider import CompatibleProvider
+    captured={}
+
+    class Response:
+        def __enter__(self):return self
+        def __exit__(self,*args):return False
+        def read(self,_limit):
+            return json.dumps({'choices':[{'finish_reason':'length','message':{'content':'{"candidate_reviews":['}}]}).encode()
+
+    def fake_urlopen(request,timeout):
+        captured['request']=json.loads(request.data)
+        captured['timeout']=timeout
+        return Response()
+
+    monkeypatch.setattr('urllib.request.urlopen',fake_urlopen)
+    provider=CompatibleProvider({'LLM_BASE_URL':'http://127.0.0.1:9999/v1','LLM_API_KEY':'test-key','LLM_MODEL':'test-model'})
+    with pytest.raises(ApiError) as raised:
+        provider.complete([{'role':'user','content':'synthetic OCR'}],max_tokens=5000)
+    assert raised.value.code=='LLM_RESPONSE_TRUNCATED'
+    assert captured['request']['max_tokens']==5000
+    assert captured['request']['stream'] is False
 
 
 def test_canonical_merge_aggregates_outputs_without_rewriting_original_question_ids(client,app):

@@ -3,104 +3,33 @@ import { computed, onMounted, ref } from "vue";
 import { RouterLink } from "vue-router";
 import type { MergeOutcome } from "../api/question-merge";
 import { ApiError, request } from "../api/client";
+import type {
+  IngestionCandidate,
+  IngestionJob,
+  IngestionOCRBlock,
+  IngestionTaxonomyItem,
+  SourceAsset,
+  UploadResult,
+} from "../api/ingestion";
 import IngestionCandidateEditor from "../components/IngestionCandidateEditor.vue";
 import QuestionRelationReview from "../components/QuestionRelationReview.vue";
 import type { RelationReviewState } from "../api/question-relations";
+import InboxCandidateQueue from "../components/ingestion/InboxCandidateQueue.vue";
+import InboxSourceHistory from "../components/ingestion/InboxSourceHistory.vue";
+import JobAiTriage from "../components/ingestion/JobAiTriage.vue";
 import SourceImageViewer from "../components/SourceImageViewer.vue";
 import SourceUpload from "../components/SourceUpload.vue";
 
-interface IngestionJob {
-  id: number;
-  source_asset_id: number;
-  status: string;
-  stage: string;
-  failure_stage: string | null;
-  engine: string | null;
-  engine_version: string | null;
-  error_code: string | null;
-  error_message: string | null;
-  candidate_count: number; // Automatically grouped candidates created by the OCR run.
-}
-
-interface SourceAsset {
-  id: number;
-  source_type: string;
-  title: string | null;
-  original_filename: string | null;
-  mime_type: string;
-  byte_size: number;
-  original_width: number;
-  original_height: number;
-  display_width: number;
-  display_height: number;
-  sha256: string;
-  archived_at: string | null;
-  ingestion_jobs: IngestionJob[];
-}
-
-interface UploadResult {
-  status: "stored" | "rejected";
-  source?: SourceAsset;
-  job?: IngestionJob;
-  error?: { code: string; message: string; fields: Record<string, string> };
-  filename?: string;
-}
-
-interface Candidate {
-  id: number;
-  text: string;
-  difficulty: string | null;
-  status: string;
-  archived_at: string | null;
-  candidate_state: string;
-  candidate_revision: number;
-  canonical_question_id: number | null;
-  split_from_candidate_id: number | null;
-  split_child_ids: number[];
-  superseded_by_candidate_id: number | null;
-  topics: Array<{ id: number; name: string; is_active: boolean }>;
-  tags: Array<{ id: number; name: string; is_active: boolean }>;
-  sources: Array<{
-    question_source_id: number;
-    source_asset_id: number;
-    locator_json: { x: number; y: number; width: number; height: number };
-    locator_correction_json: { x: number; y: number; width: number; height: number } | null;
-    source_text_snapshot: string;
-    raw_ocr_text_snapshot: string;
-    confidence: number | null;
-    ocr_blocks: Array<{
-      id: string;
-      text: string;
-      bbox: { x: number; y: number; width: number; height: number };
-      reading_order: number;
-    }>;
-  }>;
-}
-
-interface OCRBlock {
-  id: string;
-  text: string;
-  bbox: { x: number; y: number; width: number; height: number };
-  reading_order: number;
-  confidence: number | null;
-}
-
-interface TaxonomyItem {
-  id: number;
-  name: string;
-  is_active: boolean;
-}
-
 const sources = ref<SourceAsset[]>([]);
-const topics = ref<TaxonomyItem[]>([]);
-const tags = ref<TaxonomyItem[]>([]);
+const topics = ref<IngestionTaxonomyItem[]>([]);
+const tags = ref<IngestionTaxonomyItem[]>([]);
 const uploadResults = ref<UploadResult[]>([]);
 const selectedJobId = ref<number | null>(null);
 const selectedCandidateId = ref<number | null>(null);
 const selectedSourceId = ref<number | null>(null);
-const candidates = ref<Candidate[]>([]);
+const candidates = ref<IngestionCandidate[]>([]);
 const candidateHistoryLoaded = ref(false);
-const ocrBlocks = ref<OCRBlock[]>([]);
+const ocrBlocks = ref<IngestionOCRBlock[]>([]);
 const busy = ref(false);
 const mergeSuccess = ref<MergeOutcome | null>(null);
 const loadError = ref("");
@@ -195,8 +124,8 @@ async function loadSources() {
   try {
     const [sourceRows, topicRows, tagRows] = await Promise.all([
       request<SourceAsset[]>("/api/v1/sources"),
-      request<TaxonomyItem[]>("/api/v1/topics"),
-      request<TaxonomyItem[]>("/api/v1/tags"),
+      request<IngestionTaxonomyItem[]>("/api/v1/topics"),
+      request<IngestionTaxonomyItem[]>("/api/v1/tags"),
     ]);
     sources.value = sourceRows;
     topics.value = topicRows;
@@ -317,8 +246,8 @@ async function openJob(
   historyError.value = "";
   try {
     const [candidateRows, blocks] = await Promise.all([
-      request<Candidate[]>("/api/v1/ingestions/" + jobId + "/candidates"),
-      request<OCRBlock[]>("/api/v1/ingestions/" + jobId + "/ocr-blocks"),
+      request<IngestionCandidate[]>("/api/v1/ingestions/" + jobId + "/candidates"),
+      request<IngestionOCRBlock[]>("/api/v1/ingestions/" + jobId + "/ocr-blocks"),
     ]);
     if (requestRevision !== jobLoadRevision) return;
     candidates.value = candidateRows;
@@ -335,7 +264,7 @@ async function openJob(
   }
 }
 
-function selectCandidate(candidate: Candidate, preferredSourceId: number | null = null) {
+function selectCandidate(candidate: IngestionCandidate, preferredSourceId: number | null = null) {
   // Re-clicking the selected row must preserve its editor draft and review gate.
   if (selectedCandidateId.value === candidate.id && preferredSourceId === null) return;
   candidateSelectionRevision.value += 1;
@@ -347,6 +276,11 @@ function selectCandidate(candidate: Candidate, preferredSourceId: number | null 
       ?.question_source_id ?? candidate.sources[0]?.question_source_id ?? null;
   selectedMergeIds.value = [];
   mergeFinalText.value = candidate.text;
+}
+
+function openBatchCandidate(candidateId: number) {
+  const candidate = candidates.value.find((item) => item.id === candidateId);
+  if (candidate) selectCandidate(candidate);
 }
 
 async function openHistoricalJob(jobId: number) {
@@ -393,7 +327,7 @@ async function createManualCandidate() {
   };
   if (manualCandidateText.value.trim()) payload.text = manualCandidateText.value;
   try {
-    const candidate = await request<Candidate>(
+    const candidate = await request<IngestionCandidate>(
       "/api/v1/ingestions/" + jobId + "/candidates",
       {
         method: "POST",
@@ -409,6 +343,126 @@ async function createManualCandidate() {
   }
 }
 
+function openManualCreationForBlocks(blockIds: string[]) {
+  manualBlockIds.value = [...blockIds];
+  manualCandidateText.value = "";
+  manualCreateOpen.value = true;
+}
+
+async function applyBatchCandidate(payload: {
+  candidate_id: number;
+  expected_revision: number;
+  text: string;
+  topic_ids?: number[];
+  tag_ids?: number[];
+  difficulty?: string | null;
+}) {
+  const jobId = selectedJobId.value;
+  if (jobId === null || candidateDraftDirty.value) return;
+  const keepCandidateId = selectedCandidateId.value;
+  const sourceId = selectedSourceId.value;
+  candidateBusy.value = true;
+  historyError.value = "";
+  try {
+    await request<IngestionCandidate>(`/api/v1/ingestion-candidates/${payload.candidate_id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        expected_revision: payload.expected_revision,
+        text: payload.text,
+        ...(payload.topic_ids?.length ? { topic_ids: payload.topic_ids } : {}),
+        ...(payload.tag_ids?.length ? { tag_ids: payload.tag_ids } : {}),
+        ...(payload.difficulty ? { difficulty: payload.difficulty } : {}),
+      }),
+    });
+    await refreshCurrentJob(keepCandidateId, sourceId, jobId);
+  } catch (error) {
+    if (selectedJobId.value === jobId) {
+      await refreshCurrentJob(keepCandidateId, sourceId, jobId);
+      setHistoryErrorForJob(jobId, conflictMessage(error, "候选已变化或建议未能保存，请重新读取后重试。"));
+    }
+  } finally {
+    candidateBusy.value = false;
+  }
+}
+
+async function archiveBatchCandidate(payload: { candidate_id: number; expected_revision: number }) {
+  const jobId = selectedJobId.value;
+  if (jobId === null || candidateDraftDirty.value) return;
+  const keepCandidateId = selectedCandidateId.value === payload.candidate_id ? null : selectedCandidateId.value;
+  const sourceId = selectedSourceId.value;
+  candidateBusy.value = true;
+  historyError.value = "";
+  try {
+    await request(`/api/v1/ingestion-candidates/${payload.candidate_id}/archive`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ expected_revision: payload.expected_revision }),
+    });
+    await refreshCurrentJob(keepCandidateId, sourceId, jobId);
+  } catch (error) {
+    if (selectedJobId.value === jobId) {
+      await refreshCurrentJob(keepCandidateId, sourceId, jobId);
+      setHistoryErrorForJob(jobId, conflictMessage(error, "候选未能归档，请重新读取后重试。"));
+    }
+  } finally {
+    candidateBusy.value = false;
+  }
+}
+
+async function splitBatchCandidate(payload: {
+  candidate_id: number;
+  expected_revision: number;
+  parts: Array<{ text: string; ocr_block_ids: string[]; source_text_snapshot: string }>;
+}) {
+  const jobId = selectedJobId.value;
+  if (jobId === null || candidateDraftDirty.value) return;
+  const sourceId = selectedSourceId.value;
+  candidateBusy.value = true;
+  historyError.value = "";
+  try {
+    const response = await request<{ children: IngestionCandidate[] }>(
+      `/api/v1/ingestions/${jobId}/candidates/${payload.candidate_id}/split`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ expected_revision: payload.expected_revision, parts: payload.parts }),
+      },
+    );
+    const firstChild = response.children.find((candidate) => candidate.candidate_state === "pending_review");
+    await refreshCurrentJob(firstChild?.id ?? null, firstChild?.sources[0]?.question_source_id ?? sourceId, jobId);
+  } catch (error) {
+    if (selectedJobId.value === jobId) {
+      await refreshCurrentJob(selectedCandidateId.value, sourceId, jobId);
+      setHistoryErrorForJob(jobId, conflictMessage(error, "候选未能拆分，请检查 OCR 来源后重试。"));
+    }
+  } finally {
+    candidateBusy.value = false;
+  }
+}
+
+async function createBatchCandidate(payload: { ocr_block_ids: string[]; text: string }) {
+  const jobId = selectedJobId.value;
+  if (jobId === null || candidateDraftDirty.value) return;
+  candidateBusy.value = true;
+  historyError.value = "";
+  try {
+    const candidate = await request<IngestionCandidate>(`/api/v1/ingestions/${jobId}/candidates`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ...payload, expected_unassigned: true }),
+    });
+    await refreshCurrentJob(candidate.id, candidate.sources[0]?.question_source_id ?? null, jobId);
+  } catch (error) {
+    if (selectedJobId.value === jobId) {
+      await refreshCurrentJob(selectedCandidateId.value, selectedSourceId.value, jobId);
+      setHistoryErrorForJob(jobId, conflictMessage(error, "来源已关联或候选未能创建，请重新分析后重试。"));
+    }
+  } finally {
+    candidateBusy.value = false;
+  }
+}
+
 async function patchCandidate(payload: Record<string, unknown>) {
   if (selectedCandidateId.value === null || selectedJobId.value === null) return;
   const jobId = selectedJobId.value;
@@ -417,7 +471,7 @@ async function patchCandidate(payload: Record<string, unknown>) {
   candidateBusy.value = true;
   historyError.value = "";
   try {
-    await request<Candidate>(
+    await request<IngestionCandidate>(
       "/api/v1/ingestion-candidates/" + candidateId,
       {
         method: "PATCH",
@@ -447,7 +501,7 @@ async function splitCandidate(payload: Record<string, unknown>) {
   candidateBusy.value = true;
   historyError.value = "";
   try {
-    const result = await request<{ children: Candidate[] }>(
+    const result = await request<{ children: IngestionCandidate[] }>(
       "/api/v1/ingestions/" +
         jobId +
         "/candidates/" +
@@ -539,7 +593,7 @@ async function mergeCandidates() {
     const selectedCandidates = candidates.value.filter((candidate) =>
       participantIds.includes(candidate.id),
     );
-    const result = await request<{ survivor: Candidate }>(
+    const result = await request<{ survivor: IngestionCandidate }>(
       "/api/v1/ingestions/" + jobId + "/candidates/merge",
       {
         method: "POST",
@@ -608,239 +662,215 @@ onMounted(loadSources);
 
 <template>
   <section aria-label="截图采集收件箱" class="inbox-page">
-    <header class="page-heading"><div><span class="eyebrow">Capture & review</span><h2>截图采集</h2><p>从截图到题库，每一道题都经过你的审核。</p></div></header>
-    <div class="inbox-workspace"><aside class="inbox-library">
-    <SourceUpload :disabled="busy" @upload="uploadFiles" />
-    <p v-if="busy" role="status">正在处理截图…</p>
-    <p v-if="loadError" role="alert">{{ loadError }}</p>
+    <header class="page-heading inbox-page-heading">
+      <div>
+        <span class="eyebrow">截图导入工作流</span>
+        <h2>截图采集</h2>
+        <p>上传截图后校对识别结果；确认入库前，原图和 OCR 来源始终保留。</p>
+      </div>
+      <ol class="inbox-workflow" aria-label="截图入库流程">
+        <li><span class="workflow-number">01</span><span>上传</span></li>
+        <li><span class="workflow-number">02</span><span>校对</span></li>
+        <li><span class="workflow-number">03</span><span>确认入库</span></li>
+      </ol>
+    </header>
 
-    <section v-if="uploadResults.length" aria-label="本次上传结果">
-      <h3>本次上传</h3>
-      <ul>
-        <li v-for="(result, index) in uploadResults" :key="index">
-          <span v-if="result.status === 'stored'">
-            {{ result.source?.original_filename }} · {{ result.job ? stateLabel(result.job.status) : "" }}
-          </span>
-          <span v-else>
-            {{ result.filename ?? "截图 " + (index + 1) }} ·
-            {{ result.error?.code }} · {{ result.error?.message }}
-          </span>
-        </li>
-      </ul>
-    </section>
-
-    <section aria-label="截图与导入历史">
-      <h3>截图历史</h3>
-      <p v-if="sources.length === 0" class="empty-state">还没有截图</p>
-      <article v-for="asset in sources" :key="asset.id" class="source-entry">
-        <h4>{{ asset.title || asset.original_filename || "截图 " + asset.id }}</h4>
-        <p class="muted">{{ asset.display_width }} × {{ asset.display_height }} · {{ asset.ingestion_jobs.length }} 次导入</p><details><summary>来源校验信息</summary><p class="mono">{{ asset.sha256 }}</p></details>
-        <a :href="'/api/v1/sources/' + asset.id + '/original'">打开原图</a>
-        <ul aria-label="OCR 任务历史">
-          <li v-for="job in asset.ingestion_jobs" :key="job.id">
-            <button
-              type="button"
-              :aria-label="'打开导入任务 ' + job.id"
-              :aria-pressed="job.id === selectedJobId"
-              @click="openHistoricalJob(job.id)"
-            >
-              任务 {{ job.id }} · {{ stateLabel(job.status) }} · 自动候选 {{ job.candidate_count }}
-            </button>
-            <button
-              v-if="job.status === 'queued' || job.status === 'running'"
-              type="button"
-              :disabled="busy"
-              :aria-label="job.status === 'queued' ? '继续识别任务 ' + job.id : '查看任务状态 ' + job.id"
-              @click="resumeJob(job.id)"
-            >
-              {{ job.status === "queued" ? "继续识别" : "查看状态" }}
-            </button>
-            <span v-if="job.error_code">{{ job.error_code }} · {{ job.error_message }}</span>
-            <button
-              v-if="job.status === 'failed'"
-              type="button"
-              :disabled="busy"
-              :aria-label="'重试截图 ' + asset.id"
-              @click="retrySource(asset.id)"
-            >
-              重新识别
-            </button>
+    <section class="inbox-intake" aria-label="上传与处理状态">
+      <SourceUpload :disabled="busy" @upload="uploadFiles" />
+      <p v-if="busy" role="status">正在处理截图…</p>
+      <p v-if="loadError" role="alert">{{ loadError }}</p>
+      <section v-if="uploadResults.length" class="upload-results" aria-label="本次上传结果">
+        <h3>本次上传结果</h3>
+        <ul>
+          <li v-for="(result, index) in uploadResults" :key="index">
+            <span v-if="result.status === 'stored'">
+              {{ result.source?.original_filename }} · {{ result.job ? stateLabel(result.job.status) : "" }}
+            </span>
+            <span v-else>
+              {{ result.filename ?? "截图 " + (index + 1) }} ·
+              {{ result.error?.code }} · {{ result.error?.message }}
+            </span>
           </li>
         </ul>
-      </article>
+      </section>
     </section>
 
-    </aside><div>
-    <p v-if="historyError" role="alert">{{ historyError }}</p>
-    <section v-if="selectedJob" aria-label="导入任务详情" class="job-workspace">
-      <div class="job-heading"><h3>任务 {{ selectedJob.id }}</h3><span class="badge" :class="selectedJob.status === 'succeeded' ? 'success' : selectedJob.status === 'failed' ? 'danger' : 'warning'">{{ stateLabel(selectedJob.status) }}</span></div>
-      <p v-if="selectedJob.failure_stage">失败阶段：{{ selectedJob.failure_stage }}</p>
-      <details v-if="ocrBlocks.length"><summary>查看完整 OCR 原文（{{ ocrBlocks.length }} 个区域）</summary><pre aria-label="OCR 原文">{{
-        ocrBlocks.map((block) => block.text).join("\n")
-      }}</pre></details>
-      <p v-else>没有识别到文字</p>
-      <section
-        v-if="selectedJob.status === 'succeeded' && selectedJob.stage === 'completed' && ocrBlocks.length"
-        aria-label="OCR 人工补建候选"
-      >
-        <button
-          v-if="!manualCreateOpen"
-          type="button"
-          aria-label="补建候选题"
-          @click="manualCreateOpen = true"
-        >
-          从 OCR 块补建候选题
-        </button>
-        <form
-          v-if="manualCreateOpen"
-          aria-label="从 OCR 块补建候选题"
-          @submit.prevent="createManualCandidate"
-        >
-          <p>选择一道未自动生成候选题的来源文字。OCR 块可被多个候选引用，补建不会修改已有候选或 OCR 证据。</p>
-          <ul aria-label="可选 OCR 块">
-            <li v-for="block in ocrBlocks" :key="block.id">
-              <label>
-                <input
-                  v-model="manualBlockIds"
-                  type="checkbox"
-                  :value="block.id"
-                  :disabled="!block.text.trim() || candidateBusy"
-                  :aria-label="'选择用于补建的 OCR 块 ' + block.id"
-                />
-                {{ block.reading_order + 1 }}. {{ block.text }}
-              </label>
-            </li>
-          </ul>
-          <pre v-if="selectedManualBlocks.length" aria-label="补建候选题 OCR 快照">{{ manualSourceText }}</pre>
-          <label>
-            最终题目正文（可修正；留空则使用所选 OCR 文本）
-            <textarea
-              v-model="manualCandidateText"
-              aria-label="补建候选题正文"
-              :placeholder="manualSourceText"
-            />
-          </label>
-          <button type="submit" :disabled="candidateBusy || manualBlockIds.length === 0">
-            创建待审核候选题
-          </button>
-          <button type="button" :disabled="candidateBusy" @click="manualCreateOpen = false">
-            取消
-          </button>
-        </form>
-      </section>
-      <ul aria-label="候选题历史" class="candidate-list">
-        <li v-for="candidate in candidates" :key="candidate.id">
-          <input
-            v-if="candidate.candidate_state === 'pending_review' && !candidate.archived_at"
-            v-model="selectedMergeIds"
-            type="checkbox"
-            :value="candidate.id"
-            :aria-label="'选择 OCR 候选区域 ' + candidate.id"
-          />
-          <button
-            type="button"
-            :aria-label="'查看候选题 ' + candidate.id"
-            :aria-pressed="candidate.id === selectedCandidateId"
-            @click="selectCandidate(candidate)"
+    <div class="inbox-workspace">
+      <aside class="inbox-library" aria-label="截图与候选导航">
+        <InboxCandidateQueue
+          v-if="selectedJob"
+          :job-id="selectedJob.id"
+          :candidates="candidates"
+          :loaded="candidateHistoryLoaded"
+          :pending-count="pendingCandidateCount"
+          :selected-candidate-id="selectedCandidateId"
+          :busy="candidateBusy"
+          v-model:selected-merge-ids="selectedMergeIds"
+          v-model:merge-final-text="mergeFinalText"
+          @select="selectCandidate"
+          @merge="mergeCandidates"
+        />
+        <InboxSourceHistory
+          :sources="sources"
+          :selected-job-id="selectedJobId"
+          :busy="busy"
+          :state-label="stateLabel"
+          @open-job="openHistoricalJob"
+          @resume-job="resumeJob"
+          @retry-source="retrySource"
+        />
+
+      </aside>
+
+      <div class="inbox-review-pane">
+        <p v-if="historyError" role="alert">{{ historyError }}</p>
+        <section v-if="selectedJob" aria-label="导入任务详情" class="job-workspace">
+          <header class="job-heading">
+            <div><span class="eyebrow">当前来源 · 任务 {{ selectedJob.id }}</span><h3>候选审核</h3></div>
+            <span class="badge" :class="selectedJob.status === 'succeeded' ? 'success' : selectedJob.status === 'failed' ? 'danger' : 'warning'">{{ stateLabel(selectedJob.status) }}</span>
+          </header>
+
+          <div class="job-source-context">
+            <p v-if="selectedJob.failure_stage" class="job-failure">失败阶段：{{ selectedJob.failure_stage }}</p>
+            <details v-if="ocrBlocks.length" class="ocr-original">
+              <summary>查看完整 OCR 原文 <span class="badge">{{ ocrBlocks.length }} 个区域</span></summary>
+              <pre aria-label="OCR 原文">{{ ocrBlocks.map((block) => block.text).join("\n") }}</pre>
+            </details>
+            <p v-else>没有识别到文字</p>
+          </div>
+
+          <section
+            v-if="selectedJob.status === 'succeeded' && selectedJob.stage === 'completed' && ocrBlocks.length"
+            aria-label="OCR 人工补建候选"
+            class="manual-candidate-tools"
           >
-            <span class="candidate-title">{{ candidate.text }}</span><span class="badge" :class="candidate.status === 'merged' ? 'accent' : candidate.candidate_state === 'pending_review' ? 'warning' : candidate.candidate_state === 'confirmed' ? 'success' : ''">{{ candidate.status === 'merged' ? '已归并' : stateLabel(candidate.candidate_state) }}</span>
-          </button>
-          <span> 来源区域 {{ candidate.sources.map((item) => item.question_source_id).join(", ") }} </span>
-          <span v-if="candidate.split_from_candidate_id">拆分自候选 #{{ candidate.split_from_candidate_id }}</span>
-          <span v-if="candidate.split_child_ids.length">
-            已拆分为候选 {{ candidate.split_child_ids.map((id) => "#" + id).join("、") }}
-          </span>
-          <span v-if="candidate.superseded_by_candidate_id">
-            已合并至候选 #{{ candidate.superseded_by_candidate_id }}
-          </span>
-        </li>
-      </ul>
-      <p v-if="candidateHistoryLoaded" aria-label="候选数量统计">
-        历史候选 {{ candidates.length }} · 待确认 {{ pendingCandidateCount }}
-      </p>
-      <p v-if="selectedCandidate && selectedCandidate.candidate_state !== 'pending_review'">
-        此候选已完成审核，只能查看历史来源证据。
-      </p>
-      <details class="candidate-extras" v-if="selectedCandidate && selectedCandidate.candidate_state === 'pending_review' && !selectedCandidate.archived_at"><summary>整理同一截图的候选边界</summary>
-      <form
-        aria-label="候选题同任务合并"
-        @submit.prevent="mergeCandidates"
-      >
-        <label>
-          合并后正文
-          <textarea v-model="mergeFinalText" aria-label="合并后题目正文" />
-        </label>
-        <button type="submit" :disabled="candidateBusy">合并 OCR 候选区域</button>
-      </form></details>
-      <div v-if="mergeSuccess" class="success-banner" role="status">归并成功 · 候选 #{{ mergeSuccess.sourceId }} 已确认并归并。<RouterLink :to="`/questions/${mergeSuccess.canonicalId}`">打开规范题 #{{ mergeSuccess.canonicalId }}</RouterLink></div>
-      <div v-if="selectedCandidate?.status === 'merged' && !mergeSuccess" class="canonical-banner">此候选已归并，保留原始 OCR 与来源证据。<RouterLink :to="`/questions/${selectedCandidate.canonical_question_id}`">打开规范题 #{{ selectedCandidate.canonical_question_id }}</RouterLink></div>
-      <div v-if="selectedCandidate" class="candidate-focus"><span class="eyebrow">当前候选 #{{ selectedCandidate.id }}</span><h3>{{ selectedCandidate.text }}</h3><p v-if="selectedCandidate.candidate_state === 'pending_review'" class="helper">① 校对并保存正文　② 审核相似题　③ 独立入库或归并</p></div>
-      <div class="candidate-review-workspace" :class="{historical:selectedCandidate?.candidate_state !== 'pending_review'}"><div class="candidate-main"><IngestionCandidateEditor
-        v-if="
-          selectedCandidate &&
-          selectedCandidate.candidate_state === 'pending_review' &&
-          !selectedCandidate.archived_at &&
-          selectedCandidate.status === 'pending_review'
-        "
-        :candidate="selectedCandidate"
-        :topics="topics"
-        :tags="tags"
-        :selected-source-id="selectedSourceId"
-        :busy="candidateBusy"
-        :confirmation-blocked="!canConfirmSelectedCandidate"
-        @select-source="selectedSourceId = $event"
-        @dirty-change="candidateDraftDirty = $event"
-        @ai-conflict="refreshAfterAiConflict"
-        @save="patchCandidate"
-        @split="splitCandidate"
-        @archive="candidateDisposition('archive', $event)"
-        @confirm="candidateDisposition('confirm', $event)"
-      />
-      <QuestionRelationReview
-        v-if="selectedCandidate && selectedCandidate.candidate_state === 'pending_review' && !selectedCandidate.archived_at && selectedCandidate.status === 'pending_review'"
-        :key="`${selectedCandidate.id}:${relationContextKey}`"
-        :question-id="selectedCandidate.id"
-        :text="selectedCandidate.text"
-        :context-key="relationContextKey"
-        :disabled="candidateBusy || candidateDraftDirty"
-        @state="setRelationReviewState"
-        @merged="onCanonicalMerged"
-      />
-      </div><aside class="candidate-evidence"><h3>来源证据</h3>
-      <SourceImageViewer
-        v-if="manualCandidatePreview && selectedJob"
-        :sources="[]"
-        :selected-source-id="null"
-        :image-width="selectedJob.source.display_width"
-        :image-height="selectedJob.source.display_height"
-        :preview="manualCandidatePreview"
-      />
-      <SourceImageViewer
-        v-else-if="selectedCandidate"
-        :sources="selectedCandidateSources"
-        :selected-source-id="selectedSourceId"
-        :image-width="selectedSourceAsset?.display_width ?? 0"
-        :image-height="selectedSourceAsset?.display_height ?? 0"
-        @select-source="selectedSourceId = $event"
-      /></aside></div>
-    </section>
-    <div v-else class="empty-state">选择左侧导入任务，开始校对题目与来源。</div>
-    </div></div>
+            <button
+              v-if="!manualCreateOpen"
+              type="button"
+              aria-label="补建候选题"
+              @click="manualCreateOpen = true"
+            >
+              从 OCR 块补建候选题
+            </button>
+            <form
+              v-if="manualCreateOpen"
+              aria-label="从 OCR 块补建候选题"
+              @submit.prevent="createManualCandidate"
+            >
+              <p>选择一道未自动生成候选题的来源文字。OCR 块可被多个候选引用，补建不会修改已有候选或 OCR 证据。</p>
+              <ul aria-label="可选 OCR 块">
+                <li v-for="block in ocrBlocks" :key="block.id">
+                  <label>
+                    <input
+                      v-model="manualBlockIds"
+                      type="checkbox"
+                      :value="block.id"
+                      :disabled="!block.text.trim() || candidateBusy"
+                      :aria-label="'选择用于补建的 OCR 块 ' + block.id"
+                    />
+                    {{ block.reading_order + 1 }}. {{ block.text }}
+                  </label>
+                </li>
+              </ul>
+              <pre v-if="selectedManualBlocks.length" aria-label="补建候选题 OCR 快照">{{ manualSourceText }}</pre>
+              <label>
+                最终题目正文（可修正；留空则使用所选 OCR 文本）
+                <textarea
+                  v-model="manualCandidateText"
+                  aria-label="补建候选题正文"
+                  :placeholder="manualSourceText"
+                />
+              </label>
+              <div class="action-row">
+                <button type="submit" :disabled="candidateBusy || manualBlockIds.length === 0">创建待审核候选题</button>
+                <button type="button" :disabled="candidateBusy" @click="manualCreateOpen = false">取消</button>
+              </div>
+            </form>
+          </section>
+
+          <JobAiTriage
+            v-if="selectedJob.status === 'succeeded' && selectedJob.stage === 'completed' && (!candidateHistoryLoaded || ocrBlocks.length)"
+            :job-id="selectedJob.id"
+            :candidates="candidates"
+            :ocr-blocks="ocrBlocks"
+            :topics="topics"
+            :tags="tags"
+            :ready="candidateHistoryLoaded && ocrBlocks.length > 0"
+            :busy="candidateBusy || !candidateHistoryLoaded"
+            :draft-dirty="candidateDraftDirty"
+            @apply-candidate="applyBatchCandidate"
+            @archive-candidate="archiveBatchCandidate"
+            @split-candidate="splitBatchCandidate"
+            @create-candidate="createBatchCandidate"
+            @open-candidate="openBatchCandidate"
+            @manual-create="openManualCreationForBlocks"
+            @conflict="refreshAfterAiConflict"
+          />
+
+          <p v-if="selectedCandidate && selectedCandidate.candidate_state !== 'pending_review'" class="history-notice">
+            此候选已完成审核，只能查看历史来源证据。
+          </p>
+          <div v-if="mergeSuccess" class="success-banner" role="status">归并成功 · 候选 #{{ mergeSuccess.sourceId }} 已确认并归并。<RouterLink :to="'/questions/' + mergeSuccess.canonicalId">打开规范题 #{{ mergeSuccess.canonicalId }}</RouterLink></div>
+          <div v-if="selectedCandidate?.status === 'merged' && !mergeSuccess" class="canonical-banner">此候选已归并，保留原始 OCR 与来源证据。<RouterLink :to="'/questions/' + selectedCandidate.canonical_question_id">打开规范题 #{{ selectedCandidate.canonical_question_id }}</RouterLink></div>
+
+          <div v-if="selectedCandidate" class="candidate-focus">
+            <span class="eyebrow">当前候选 #{{ selectedCandidate.id }}</span>
+            <h3>{{ selectedCandidate.text }}</h3>
+            <p v-if="selectedCandidate.candidate_state === 'pending_review'" class="helper">校对正文 → 检查相似题 → 保存候选修改 → 确认入库</p>
+          </div>
+          <div v-else class="empty-state review-empty-state">从左侧候选列表选择一道题，开始校对与确认。</div>
+
+          <div v-if="selectedCandidate" class="candidate-review-workspace" :class="{historical:selectedCandidate.candidate_state !== 'pending_review'}">
+            <div class="candidate-main">
+              <IngestionCandidateEditor
+                v-if="selectedCandidate.candidate_state === 'pending_review' && !selectedCandidate.archived_at && selectedCandidate.status === 'pending_review'"
+                :candidate="selectedCandidate"
+                :topics="topics"
+                :tags="tags"
+                :selected-source-id="selectedSourceId"
+                :busy="candidateBusy"
+                :confirmation-blocked="!canConfirmSelectedCandidate"
+                @select-source="selectedSourceId = $event"
+                @dirty-change="candidateDraftDirty = $event"
+                @ai-conflict="refreshAfterAiConflict"
+                @save="patchCandidate"
+                @split="splitCandidate"
+                @archive="candidateDisposition('archive', $event)"
+                @confirm="candidateDisposition('confirm', $event)"
+              />
+              <QuestionRelationReview
+                v-if="selectedCandidate.candidate_state === 'pending_review' && !selectedCandidate.archived_at && selectedCandidate.status === 'pending_review'"
+                :key="selectedCandidate.id + ':' + relationContextKey"
+                :question-id="selectedCandidate.id"
+                :text="selectedCandidate.text"
+                :context-key="relationContextKey"
+                :disabled="candidateBusy || candidateDraftDirty"
+                @state="setRelationReviewState"
+                @merged="onCanonicalMerged"
+              />
+            </div>
+            <aside class="candidate-evidence"><h3>来源证据</h3>
+              <SourceImageViewer
+                v-if="manualCandidatePreview && selectedJob"
+                :sources="[]"
+                :selected-source-id="null"
+                :image-width="selectedJob.source.display_width"
+                :image-height="selectedJob.source.display_height"
+                :preview="manualCandidatePreview"
+              />
+              <SourceImageViewer
+                v-else-if="selectedCandidate"
+                :sources="selectedCandidateSources"
+                :selected-source-id="selectedSourceId"
+                :image-width="selectedSourceAsset?.display_width ?? 0"
+                :image-height="selectedSourceAsset?.display_height ?? 0"
+                @select-source="selectedSourceId = $event"
+              />
+            </aside>
+          </div>
+        </section>
+        <div v-else class="empty-state job-empty-state">选择左侧导入任务，开始校对题目与来源。</div>
+      </div>
+    </div>
   </section>
 </template>
-
-<style scoped>
-.source-entry {
-  margin: 1rem 0;
-  padding: 0.75rem;
-  border: 1px solid #d4d8df;
-  border-radius: 0.5rem;
-  overflow-wrap: anywhere;
-}
-
-pre {
-  max-height: 16rem;
-  overflow: auto;
-  white-space: pre-wrap;
-}
-</style>

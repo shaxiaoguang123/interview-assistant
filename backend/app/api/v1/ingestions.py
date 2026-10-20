@@ -25,7 +25,10 @@ from app.services.ingestion import (
     ingestion_job_json,
     run_ingestion,
 )
-from app.services.ingestion_ai import generate_candidate_suggestions
+from app.services.ingestion_ai import (
+    generate_candidate_suggestions,
+    generate_ingestion_batch_review,
+)
 
 
 blueprint = Blueprint("ingestions_v1", __name__, url_prefix="/api/v1")
@@ -228,6 +231,14 @@ def patch_candidate(candidate_id: int):
 def post_candidate_ai_suggestions(candidate_id: int):
     result = generate_candidate_suggestions(
         get_session(), candidate_id, request.get_json(silent=True)
+    )
+    return jsonify(result)
+
+
+@blueprint.post("/ingestions/<int:job_id>/ai-review")
+def post_ingestion_ai_review(job_id: int):
+    result = generate_ingestion_batch_review(
+        get_session(), job_id, request.get_json(silent=True)
     )
     return jsonify(result)
 
