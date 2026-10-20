@@ -155,7 +155,8 @@ async function analyze() {
     } else if (caught instanceof ApiError && caught.code === "LLM_TIMEOUT") {
       error.value = "模型请求超时；OCR 数据和现有候选均已保留，可稍后重试。";
     } else if (caught instanceof ApiError) {
-      error.value = caught.message;
+      const detail = caught.fields.response;
+      error.value = detail ? `${caught.message}（${detail}）` : caught.message;
     } else {
       error.value = caught instanceof Error ? caught.message : "AI 分流失败；候选与 OCR 来源未更改。";
     }
