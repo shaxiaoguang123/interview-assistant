@@ -184,4 +184,21 @@ describe("job-level AI OCR triage", () => {
     expect(wrapper.get("[role='alert']").text()).toContain("尚未配置 LLM");
     expect(wrapper.find(".ai-analyze-button").attributes("disabled")).toBeUndefined();
   });
+
+  it("shows a safe validation reason when an AI result is rejected", async () => {
+    vi.mocked(reviewIngestionJob).mockRejectedValueOnce(
+      new ApiError(
+        "INGESTION_AI_RESPONSE_INVALID",
+        "AI 返回的题目或来源建议无法安全校验；原候选与 OCR 证据未更改。",
+        502,
+        { response: "建议引用的原文片段不属于所列 OCR 来源块" },
+      ),
+    );
+    const wrapper = mountTriage();
+
+    await wrapper.get(".ai-analyze-button").trigger("click");
+    await flushPromises();
+
+    expect(wrapper.get("[role='alert']").text()).toContain("原文片段不属于所列 OCR 来源块");
+  });
 });

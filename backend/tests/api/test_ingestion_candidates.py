@@ -1985,7 +1985,6 @@ def _batch_review_payload(candidate_id, revision, candidate_block, orphan_block)
                 "candidate_id": candidate_id,
                 "candidate_revision": revision,
                 "classification": "question",
-                "source_text_snapshot": "What is MCP?",
                 "suggested_text": "What is the Model Context Protocol (MCP)?",
                 "topic_ids": [],
                 "tag_ids": [],
@@ -1999,7 +1998,6 @@ def _batch_review_payload(candidate_id, revision, candidate_block, orphan_block)
             {
                 "classification": "not_question",
                 "ocr_block_ids": [orphan_block],
-                "source_text_snapshot": "技术面试题汇总",
                 "suggested_text": None,
                 "reason": "这是页面标题。",
                 "warnings": [],
@@ -2040,7 +2038,9 @@ def test_batch_ai_triage_classifies_candidate_and_orphan_without_mutating_data(c
     result = response.get_json()
     assert result["job_id"] == fixture["job_id"]
     assert result["candidate_reviews"][0]["classification"] == "question"
+    assert result["candidate_reviews"][0]["source_text_snapshot"] == "What is MCP?"
     assert result["orphan_reviews"][0]["classification"] == "not_question"
+    assert result["orphan_reviews"][0]["source_text_snapshot"] == "技术面试题汇总"
     assert fake.max_tokens == [5000]
     sent = json.dumps(fake.messages, ensure_ascii=False)
     assert "What is MCP?" in sent
@@ -2055,7 +2055,27 @@ def test_batch_ai_triage_classifies_candidate_and_orphan_without_mutating_data(c
         assert {block.id for block in blocks} == {*fixture["block_ids"], orphan_id}
 
 
-@pytest.mark.parametrize("mutation", ["unknown_candidate", "unknown_orphan", "missing_orphan", "wrong_excerpt", "invalid_classification", "unhashable_orphan_id"])
+def test_batch_ai_triage_derives_source_snapshots_from_ocr_not_model_text(client, app):
+    fixture = _candidate_fixture(client, app)
+    orphan_id = _add_orphan_ocr_block(app, fixture)
+    payload = _batch_review_payload(
+        fixture["candidate_id"], fixture["revision"], fixture["block_ids"][0], orphan_id
+    )
+    payload["candidate_reviews"][0]["source_text_snapshot"] = "fabricated candidate source"
+    payload["candidate_reviews"][0]["confidence"] = 0.99
+    payload["orphan_reviews"][0]["source_text_snapshot"] = "fabricated orphan source"
+    payload["orphan_reviews"][0]["confidence"] = 0.99
+    app.config["LLM_PROVIDER_FACTORY"] = lambda _config: _FakeIngestionProvider(payload)
+
+    response = client.post(f"/api/v1/ingestions/{fixture['job_id']}/ai-review", json={})
+
+    assert response.status_code == 200, response.get_json()
+    result = response.get_json()
+    assert result["candidate_reviews"][0]["source_text_snapshot"] == "What is MCP?"
+    assert result["orphan_reviews"][0]["source_text_snapshot"] == "技术面试题汇总"
+
+
+@pytest.mark.parametrize("mutation", ["unknown_candidate", "unknown_orphan", "missing_orphan", "invalid_classification", "unhashable_orphan_id"])
 def test_batch_ai_triage_rejects_invalid_ids_and_incomplete_coverage(client, app, mutation):
     fixture = _candidate_fixture(client, app)
     orphan_id = _add_orphan_ocr_block(app, fixture)
@@ -2072,8 +2092,6 @@ def test_batch_ai_triage_rejects_invalid_ids_and_incomplete_coverage(client, app
         payload["candidate_reviews"][0]["classification"] = []
     elif mutation == "unhashable_orphan_id":
         payload["orphan_reviews"][0]["ocr_block_ids"] = [[]]
-    else:
-        payload["orphan_reviews"][0]["source_text_snapshot"] = "fabricated text"
     app.config["LLM_PROVIDER_FACTORY"] = lambda _config: _FakeIngestionProvider(payload)
 
     response = client.post(f"/api/v1/ingestions/{fixture['job_id']}/ai-review", json={})
