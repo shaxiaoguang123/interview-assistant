@@ -49,6 +49,37 @@ export interface IngestionAiSuggestion {
   split_parts: IngestionAiSplitPart[];
 }
 
+export type IngestionAiClassification = "question" | "not_question" | "uncertain";
+
+export interface IngestionAiCandidateReview {
+  candidate_id: number;
+  candidate_revision: number;
+  classification: IngestionAiClassification;
+  source_text_snapshot: string;
+  suggested_text: string | null;
+  topic_ids: number[];
+  tag_ids: number[];
+  difficulty: "easy" | "medium" | "hard" | null;
+  reason: string;
+  warnings: string[];
+  split_parts: IngestionAiSplitPart[];
+}
+
+export interface IngestionAiOrphanReview {
+  classification: IngestionAiClassification;
+  ocr_block_ids: string[];
+  source_text_snapshot: string;
+  suggested_text: string | null;
+  reason: string;
+  warnings: string[];
+}
+
+export interface IngestionAiBatchReview {
+  job_id: number;
+  candidate_reviews: IngestionAiCandidateReview[];
+  orphan_reviews: IngestionAiOrphanReview[];
+}
+
 export function suggestIngestionCandidate(
   candidateId: number,
   expectedRevision: number,
@@ -61,4 +92,12 @@ export function suggestIngestionCandidate(
       body: JSON.stringify({ expected_revision: expectedRevision }),
     },
   );
+}
+
+export function reviewIngestionJob(jobId: number): Promise<IngestionAiBatchReview> {
+  return request<IngestionAiBatchReview>(`/api/v1/ingestions/${jobId}/ai-review`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({}),
+  });
 }

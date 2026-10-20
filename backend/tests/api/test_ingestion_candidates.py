@@ -1769,9 +1769,11 @@ class _FakeIngestionProvider:
     def __init__(self, response):
         self.response = response
         self.messages = []
+        self.max_tokens = []
 
-    def complete(self, messages):
+    def complete(self, messages, *, max_tokens=2200):
         self.messages.append(messages)
+        self.max_tokens.append(max_tokens)
         if isinstance(self.response, str):
             return self.response
         return json.dumps(self.response, ensure_ascii=False)
@@ -1974,6 +1976,205 @@ def test_ai_suggestion_without_provider_keeps_ocr_flow_available(client, app):
     assert response.status_code == 503
     assert response.get_json()["error"]["code"] == "LLM_NOT_CONFIGURED"
     assert client.get(f"/api/v1/ingestions/{fixture['job_id']}/candidates").status_code == 200
+
+
+def _batch_review_payload(candidate_id, revision, candidate_block, orphan_block):
+    return {
+        "candidate_reviews": [
+            {
+                "candidate_id": candidate_id,
+                "candidate_revision": revision,
+                "classification": "question",
+                "source_text_snapshot": "What is MCP?",
+                "suggested_text": "What is the Model Context Protocol (MCP)?",
+                "topic_ids": [],
+                "tag_ids": [],
+                "difficulty": None,
+                "reason": "原文是明确的技术问题。",
+                "warnings": [],
+                "split_parts": [],
+            }
+        ],
+        "orphan_reviews": [
+            {
+                "classification": "not_question",
+                "ocr_block_ids": [orphan_block],
+                "source_text_snapshot": "技术面试题汇总",
+                "suggested_text": None,
+                "reason": "这是页面标题。",
+                "warnings": [],
+            }
+        ],
+    }
+
+
+def _add_orphan_ocr_block(app, fixture, text="技术面试题汇总"):
+    block_id = str(uuid4())
+    with app.extensions["sqlalchemy_session_factory"].begin() as session:
+        session.add(
+            OCRBlock(
+                id=block_id,
+                ingestion_job_id=fixture["job_id"],
+                text=text,
+                bbox_json={"x": 0.05, "y": 0.02, "width": 0.8, "height": 0.05},
+                reading_order=0,
+                confidence=0.99,
+                block_type="text",
+            )
+        )
+    return block_id
+
+
+def test_batch_ai_triage_classifies_candidate_and_orphan_without_mutating_data(client, app):
+    fixture = _candidate_fixture(client, app)
+    orphan_id = _add_orphan_ocr_block(app, fixture)
+    response_body = _batch_review_payload(
+        fixture["candidate_id"], fixture["revision"], fixture["block_ids"][0], orphan_id
+    )
+    fake = _FakeIngestionProvider(response_body)
+    app.config["LLM_PROVIDER_FACTORY"] = lambda _config: fake
+
+    response = client.post(f"/api/v1/ingestions/{fixture['job_id']}/ai-review", json={})
+
+    assert response.status_code == 200, response.get_json()
+    result = response.get_json()
+    assert result["job_id"] == fixture["job_id"]
+    assert result["candidate_reviews"][0]["classification"] == "question"
+    assert result["orphan_reviews"][0]["classification"] == "not_question"
+    assert fake.max_tokens == [5000]
+    sent = json.dumps(fake.messages, ensure_ascii=False)
+    assert "What is MCP?" in sent
+    assert "技术面试题汇总" in sent
+    assert "candidate.png" not in sent
+    with app.extensions["sqlalchemy_session_factory"]() as session:
+        candidate = session.get(Question, fixture["candidate_id"])
+        blocks = list(session.scalars(select(OCRBlock).where(OCRBlock.ingestion_job_id == fixture["job_id"])))
+        assert candidate.text == "What is MCP?"
+        assert candidate.status == "pending_review"
+        assert candidate.candidate_revision == fixture["revision"]
+        assert {block.id for block in blocks} == {*fixture["block_ids"], orphan_id}
+
+
+@pytest.mark.parametrize("mutation", ["unknown_candidate", "unknown_orphan", "missing_orphan", "wrong_excerpt", "invalid_classification", "unhashable_orphan_id"])
+def test_batch_ai_triage_rejects_invalid_ids_and_incomplete_coverage(client, app, mutation):
+    fixture = _candidate_fixture(client, app)
+    orphan_id = _add_orphan_ocr_block(app, fixture)
+    payload = _batch_review_payload(
+        fixture["candidate_id"], fixture["revision"], fixture["block_ids"][0], orphan_id
+    )
+    if mutation == "unknown_candidate":
+        payload["candidate_reviews"][0]["candidate_id"] = fixture["candidate_id"] + 999
+    elif mutation == "unknown_orphan":
+        payload["orphan_reviews"][0]["ocr_block_ids"] = [str(uuid4())]
+    elif mutation == "missing_orphan":
+        payload["orphan_reviews"] = []
+    elif mutation == "invalid_classification":
+        payload["candidate_reviews"][0]["classification"] = []
+    elif mutation == "unhashable_orphan_id":
+        payload["orphan_reviews"][0]["ocr_block_ids"] = [[]]
+    else:
+        payload["orphan_reviews"][0]["source_text_snapshot"] = "fabricated text"
+    app.config["LLM_PROVIDER_FACTORY"] = lambda _config: _FakeIngestionProvider(payload)
+
+    response = client.post(f"/api/v1/ingestions/{fixture['job_id']}/ai-review", json={})
+
+    assert response.status_code == 502
+    assert response.get_json()["error"]["code"] == "INGESTION_AI_RESPONSE_INVALID"
+    with app.extensions["sqlalchemy_session_factory"]() as session:
+        candidate = session.get(Question, fixture["candidate_id"])
+        assert candidate.text == "What is MCP?"
+        assert candidate.candidate_revision == fixture["revision"]
+
+
+def test_batch_ai_triage_discards_response_if_candidate_changes_during_provider_call(client, app):
+    fixture = _candidate_fixture(client, app)
+    orphan_id = _add_orphan_ocr_block(app, fixture)
+    payload = _batch_review_payload(
+        fixture["candidate_id"], fixture["revision"], fixture["block_ids"][0], orphan_id
+    )
+
+    class MutatingProvider(_FakeIngestionProvider):
+        def complete(self, messages, *, max_tokens=2200):
+            self.messages.append(messages)
+            self.max_tokens.append(max_tokens)
+            with app.extensions["sqlalchemy_session_factory"].begin() as session:
+                candidate = session.get(Question, fixture["candidate_id"])
+                candidate.candidate_revision += 1
+            return json.dumps(payload, ensure_ascii=False)
+
+    fake = MutatingProvider(payload)
+    app.config["LLM_PROVIDER_FACTORY"] = lambda _config: fake
+
+    response = client.post(f"/api/v1/ingestions/{fixture['job_id']}/ai-review", json={})
+
+    assert response.status_code == 409
+    assert response.get_json()["error"]["code"] == "CONFLICT"
+    with app.extensions["sqlalchemy_session_factory"]() as session:
+        candidate = session.get(Question, fixture["candidate_id"])
+        assert candidate.text == "What is MCP?"
+        assert candidate.candidate_revision == fixture["revision"] + 1
+
+
+def test_batch_ai_triage_requires_explicit_json_and_provider(client, app):
+    fixture = _candidate_fixture(client, app)
+    invalid = client.post(f"/api/v1/ingestions/{fixture['job_id']}/ai-review", json={"text": "run OCR"})
+    unavailable = client.post(f"/api/v1/ingestions/{fixture['job_id']}/ai-review", json={})
+    assert invalid.status_code == 400
+    assert invalid.get_json()["error"]["code"] == "VALIDATION_ERROR"
+    assert unavailable.status_code == 503
+    assert unavailable.get_json()["error"]["code"] == "LLM_NOT_CONFIGURED"
+
+
+def test_ai_orphan_candidate_creation_rejects_a_block_that_became_linked(client, app):
+    fixture = _candidate_fixture(client, app)
+    orphan_id = _add_orphan_ocr_block(app, fixture, "Redis 如何实现缓存淘汰？")
+    created = client.post(
+        f"/api/v1/ingestions/{fixture['job_id']}/candidates",
+        json={
+            "ocr_block_ids": [orphan_id],
+            "text": "Redis 如何实现缓存淘汰？",
+            "expected_unassigned": True,
+        },
+    )
+    assert created.status_code == 201, created.get_json()
+    duplicate = client.post(
+        f"/api/v1/ingestions/{fixture['job_id']}/candidates",
+        json={
+            "ocr_block_ids": [orphan_id],
+            "text": "Redis 如何实现缓存淘汰？",
+            "expected_unassigned": True,
+        },
+    )
+    assert duplicate.status_code == 409
+    assert duplicate.get_json()["error"]["code"] == "CONFLICT"
+
+
+def test_batch_ai_triage_does_not_reoffer_blocks_already_in_confirmed_candidates(client, app):
+    fixture = _candidate_fixture(client, app)
+    confirmed = client.post(
+        f"/api/v1/ingestion-candidates/{fixture['candidate_id']}/confirm",
+        json={"expected_revision": fixture["revision"]},
+    )
+    assert confirmed.status_code == 200, confirmed.get_json()
+    orphan_id = _add_orphan_ocr_block(app, fixture, "Page title only")
+    response = {
+        "candidate_reviews": [],
+        "orphan_reviews": [{
+            "classification": "not_question",
+            "ocr_block_ids": [orphan_id],
+            "source_text_snapshot": "Page title only",
+            "suggested_text": None,
+            "reason": "This is a page title.",
+            "warnings": [],
+        }],
+    }
+    app.config["LLM_PROVIDER_FACTORY"] = lambda _config: _FakeIngestionProvider(response)
+
+    triage = client.post(f"/api/v1/ingestions/{fixture['job_id']}/ai-review", json={})
+
+    assert triage.status_code == 200, triage.get_json()
+    assert triage.get_json()["candidate_reviews"] == []
+    assert triage.get_json()["orphan_reviews"][0]["ocr_block_ids"] == [orphan_id]
 
 
 def test_candidate_patch_saves_existing_difficulty_field(client, app):

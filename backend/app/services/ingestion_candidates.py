@@ -217,7 +217,7 @@ def create_candidate_from_ocr_blocks(
 ) -> Question:
     if not isinstance(payload, dict):
         raise _validation("body", "Expected a JSON object")
-    allowed = {"ocr_block_ids", "text"}
+    allowed = {"ocr_block_ids", "text", "expected_unassigned"}
     unknown = set(payload) - allowed
     if unknown:
         raise _validation("body", f"Unsupported fields: {', '.join(sorted(unknown))}")
@@ -229,6 +229,9 @@ def create_candidate_from_ocr_blocks(
         or len(set(block_ids)) != len(block_ids)
     ):
         raise _validation("ocr_block_ids", "Must be a non-empty list of unique OCR block IDs")
+    expected_unassigned = payload.get("expected_unassigned", False)
+    if not isinstance(expected_unassigned, bool):
+        raise _validation("expected_unassigned", "Must be a boolean")
 
     with session.begin():
         job = session.get(IngestionJob, job_id)
@@ -249,6 +252,12 @@ def create_candidate_from_ocr_blocks(
         )
         if len(blocks) != len(block_ids):
             raise _validation("ocr_block_ids", "Every OCR block must belong to this ingestion job")
+        if expected_unassigned and session.scalar(
+            select(QuestionSourceOCRBlock.ocr_block_id)
+            .where(QuestionSourceOCRBlock.ocr_block_id.in_(block_ids))
+            .limit(1)
+        ) is not None:
+            raise ApiError(409, "CONFLICT", "OCR 来源块已关联到候选；请重新分析后再创建，避免重复题目。")
         source_text = "\n".join(block.text for block in blocks)
         prepared_text = prepare_question_text(payload.get("text", source_text))
 

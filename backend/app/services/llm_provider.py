@@ -29,15 +29,18 @@ class CompatibleProvider:
         if not self.key or not self.model:
             raise ApiError(503,'LLM_NOT_CONFIGURED','请先在模型设置中配置 Provider，或设置本机环境变量。')
 
-    def complete(self,messages):
-        body=json.dumps({'model':self.model,'messages':messages,'max_tokens':2200,'stream':False}).encode()
+    def complete(self,messages,*,max_tokens=2200):
+        body=json.dumps({'model':self.model,'messages':messages,'max_tokens':max_tokens,'stream':False}).encode()
         req=urllib.request.Request(self.base+'/chat/completions',data=body,
             headers={'Content-Type':'application/json','Authorization':'Bearer '+self.key})
         try:
             with urllib.request.urlopen(req,timeout=self.timeout) as response:
                 raw=response.read(1024*1024+1)
             if len(raw)>1024*1024:raise ValueError('Response too large')
-            data=json.loads(raw);result=data['choices'][0]['message']['content']
+            data=json.loads(raw);choice=data['choices'][0]
+            if choice.get('finish_reason') in {'length','max_tokens'}:
+                raise ApiError(502,'LLM_RESPONSE_TRUNCATED','模型输出达到长度上限，未能完成结构化结果；请缩小本次分析范围后重试。')
+            result=choice['message']['content']
             if not isinstance(result,str) or not result.strip() or len(result)>50000:raise ValueError('Invalid content')
             return result
         except urllib.error.HTTPError as error:
